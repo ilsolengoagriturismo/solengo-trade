@@ -322,6 +322,38 @@ canvas#eqCanvas{width:100%;height:120px}
 .chart-tf-tabs{display:flex;gap:6px;margin:10px 0}
 .chart-tf{font-size:9px;padding:4px 10px;border-radius:10px;border:1px solid var(--brd);color:var(--txd);cursor:pointer;letter-spacing:1px;background:none;font-family:'JetBrains Mono',monospace}
 .chart-tf.active{background:var(--gdk);color:var(--g);border-color:var(--gd)}
+
+/* HELP SYSTEM */
+.help-btn{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;background:var(--bg3);border:1px solid var(--brd);color:var(--txd);font-size:11px;cursor:pointer;margin-left:6px;vertical-align:middle;transition:all .15s;font-family:'JetBrains Mono',monospace;flex-shrink:0;line-height:1}
+.help-btn:active{background:var(--gdk);color:var(--g);border-color:var(--gd)}
+.help-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:800;backdrop-filter:blur(3px)}
+.help-overlay.open{display:block}
+.help-panel{position:fixed;bottom:0;left:0;right:0;max-width:480px;margin:0 auto;background:var(--bg2);border-top:2px solid var(--g);border-radius:16px 16px 0 0;z-index:900;max-height:75vh;display:flex;flex-direction:column;transform:translateY(100%);transition:transform .3s ease}
+.help-panel.open{transform:translateY(0)}
+.help-handle{width:32px;height:3px;background:var(--brd);border-radius:2px;margin:8px auto 4px;flex-shrink:0}
+.help-header{display:flex;justify-content:space-between;align-items:center;padding:8px 16px 10px;border-bottom:1px solid var(--brd);flex-shrink:0}
+.help-title{font-size:13px;font-weight:700;color:var(--g);letter-spacing:1px}
+.help-close{background:none;border:none;color:var(--txd);font-size:18px;cursor:pointer;padding:4px 8px}
+.help-close:active{color:var(--r)}
+.help-body{overflow-y:auto;-webkit-overflow-scrolling:touch;padding:14px 16px 24px;font-size:12px;color:var(--tx);line-height:1.7}
+.help-body h3{font-size:12px;color:var(--g);letter-spacing:1px;margin:12px 0 6px;text-transform:uppercase}
+.help-body h3:first-child{margin-top:0}
+.help-body p{margin-bottom:8px;color:var(--txd)}
+.help-body .hl{color:var(--txb);font-weight:600}
+.help-body .tip{background:var(--bg3);border:1px solid var(--brd);border-radius:8px;padding:10px;margin:8px 0;font-size:11px;color:var(--txd);line-height:1.6}
+.help-body .tip b{color:var(--y)}
+.help-body ul{margin:4px 0 8px 16px;color:var(--txd)}
+.help-body li{margin-bottom:4px}
+
+/* GUIDA PAGE */
+.guide-card{background:var(--bg2);border:1px solid var(--brd);border-radius:10px;padding:14px;margin-bottom:8px;cursor:pointer;transition:all .15s}
+.guide-card:active{background:var(--bg3);transform:scale(.98)}
+.guide-card-row{display:flex;align-items:center;gap:10px}
+.guide-icon{font-size:20px;width:36px;height:36px;display:flex;align-items:center;justify-content:center;background:var(--bg3);border-radius:8px;flex-shrink:0}
+.guide-card-txt{flex:1}
+.guide-card-title{font-size:12px;font-weight:700;color:var(--txb);letter-spacing:.5px}
+.guide-card-desc{font-size:10px;color:var(--txd);margin-top:2px;line-height:1.4}
+.guide-arrow{color:var(--txd);font-size:14px}
 </style>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 <script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
@@ -369,7 +401,7 @@ canvas#eqCanvas{width:100%;height:120px}
           <span class="chip" onclick="addSym('COIN')">COIN</span>
           <span class="chip" onclick="addSym('PLTR')">PLTR</span>
         </div>
-        <div class="section-title">WATCHLIST · <span id="wl-count">7</span> TITOLI</div>
+        <div class="section-title">WATCHLIST · <span id="wl-count">7</span> TITOLI <span class="help-btn" onclick="openHelp('watchlist')">?</span></div>
         <div id="market-list"></div>
       </div>
     </div>
@@ -380,7 +412,7 @@ canvas#eqCanvas{width:100%;height:120px}
         <div class="agent-header">
           <div class="agent-status-row">
             <div>
-              <div class="agent-title">🤖 AI Trading Agent</div>
+              <div class="agent-title">🤖 AI Trading Agent <span class="help-btn" onclick="openHelp('agent')">?</span></div>
               <div style="font-size:10px;color:var(--txd);margin-top:2px" id="agent-status-txt">Agente inattivo</div>
             </div>
             <div class="toggle-wrap">
@@ -440,7 +472,7 @@ canvas#eqCanvas{width:100%;height:120px}
           </div>
           <div style="display:flex;align-items:center;justify-content:space-between;background:var(--bg3);border:1px solid var(--brd);border-radius:8px;padding:10px 12px;margin-bottom:10px">
             <div>
-              <div style="font-size:11px;font-weight:700;color:var(--y);letter-spacing:1px">⚡ AUTOPILOTA</div>
+              <div style="font-size:11px;font-weight:700;color:var(--y);letter-spacing:1px">⚡ AUTOPILOTA <span class="help-btn" onclick="openHelp('autopilot')">?</span></div>
               <div style="font-size:9px;color:var(--txd);margin-top:2px" id="autopilot-status">Inattivo</div>
             </div>
             <label class="toggle">
@@ -465,11 +497,11 @@ canvas#eqCanvas{width:100%;height:120px}
     <div class="page" id="page-positions">
       <div class="page-pad">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
-          <div class="section-title" style="margin:0">POSIZIONI APERTE</div>
+          <div class="section-title" style="margin:0">POSIZIONI APERTE <span class="help-btn" onclick="openHelp('positions')">?</span></div>
           <button onclick="killAll()" style="background:var(--rd);color:var(--r);border:1px solid rgba(255,23,68,.3);padding:6px 12px;font-family:'JetBrains Mono',monospace;font-size:10px;cursor:pointer;border-radius:6px;letter-spacing:1px">KILL ALL</button>
         </div>
         <div id="pos-list"><div style="text-align:center;padding:40px;color:var(--txd);font-size:12px">Nessuna posizione aperta</div></div>
-        <div class="section-title" style="margin-top:16px">STORICO TRADE</div>
+        <div class="section-title" style="margin-top:16px">STORICO TRADE <span class="help-btn" onclick="openHelp('history')">?</span></div>
         <div id="hist-list"><div style="text-align:center;padding:20px;color:var(--txd);font-size:12px">Nessun trade chiuso</div></div>
       </div>
     </div>
@@ -488,13 +520,13 @@ canvas#eqCanvas{width:100%;height:120px}
           <div class="stat-box"><div class="stat-v dn" id="sv-dd">0%</div><div class="stat-l">Max Drawdown</div></div>
         </div>
         <div class="equity-box">
-          <div class="equity-title">CURVA EQUITY</div>
+          <div class="equity-title">CURVA EQUITY <span class="help-btn" onclick="openHelp('stats')">?</span></div>
           <canvas id="eqCanvas"></canvas>
         </div>
 
         <!-- AGENT PERFORMANCE DASHBOARD -->
         <div style="margin-top:16px">
-          <div class="section-title">🤖 PERFORMANCE AGENTE</div>
+          <div class="section-title">🤖 PERFORMANCE AGENTE <span class="help-btn" onclick="openHelp('agentperf')">?</span></div>
           <div class="stats-grid" style="margin-bottom:12px">
             <div class="stat-box"><div class="stat-v" id="ap-wr">—</div><div class="stat-l">Win Rate Agente</div></div>
             <div class="stat-box"><div class="stat-v" id="ap-trades">0</div><div class="stat-l">Trade Agente</div></div>
@@ -526,7 +558,7 @@ canvas#eqCanvas{width:100%;height:120px}
     <div class="page" id="page-settings">
       <div class="page-pad">
         <div class="settings-section">
-          <div class="ss-title">SUPABASE (PERSISTENZA DATI)</div>
+          <div class="ss-title">SUPABASE (PERSISTENZA DATI) <span class="help-btn" onclick="openHelp('supabase')">?</span></div>
           <div style="font-size:10px;color:var(--txd);margin-bottom:10px;line-height:1.6">Collega Supabase per salvare posizioni, trade e watchlist nel cloud.</div>
           <input type="text" class="inp-full" id="set-sb-url" placeholder="Supabase URL (https://xxx.supabase.co)">
           <input type="password" class="inp-full" id="set-sb-key" placeholder="Supabase anon key (eyJ...)">
@@ -540,7 +572,7 @@ canvas#eqCanvas{width:100%;height:120px}
           <button class="btn-save" onclick="saveBackend()" style="margin-bottom:4px">💾 SALVA BACKEND</button>
         </div>
         <div class="settings-section">
-          <div class="ss-title">API KEYS</div>
+          <div class="ss-title">API KEYS <span class="help-btn" onclick="openHelp('apikeys')">?</span></div>
           <div style="font-size:10px;color:var(--txd);margin-bottom:10px;line-height:1.6">Le chiavi sono salvate solo su questo dispositivo e non vengono mai trasmesse ad altri server.</div>
           <input type="password" class="inp-full" id="set-ai-key" placeholder="Anthropic API Key (sk-ant-api03-...)">
           <input type="text" class="inp-full" id="set-alp-key" placeholder="Alpaca KEY ID">
@@ -568,7 +600,7 @@ canvas#eqCanvas{width:100%;height:120px}
 
         <!-- ALLOCATION BOX -->
         <div class="alloc-box">
-          <div class="alloc-title">🎯 ALLOCAZIONE CAPITALE</div>
+          <div class="alloc-title">🎯 ALLOCAZIONE CAPITALE <span class="help-btn" onclick="openHelp('allocation')">?</span></div>
 
           <div class="alloc-row">
             <div class="alloc-label">🟢 INNOVAZIONE<small>ETF / Leader</small></div>
@@ -608,7 +640,7 @@ canvas#eqCanvas{width:100%;height:120px}
         <!-- TICKER NEWS (Alpaca) -->
         <div class="sent-box">
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
-            <div class="alloc-title" style="margin:0">📰 NEWS TICKER (Alpaca)</div>
+            <div class="alloc-title" style="margin:0">📰 NEWS TICKER <span class="help-btn" onclick="openHelp('tickernews')">?</span></div>
             <button onclick="refreshSentiment()" style="background:var(--gdk);color:var(--g);border:1px solid var(--gd);padding:5px 10px;font-family:'JetBrains Mono',monospace;font-size:9px;cursor:pointer;border-radius:6px">⟳</button>
           </div>
           <div style="font-size:9px;color:var(--txd);margin-bottom:10px;letter-spacing:.5px">Ultime notizie per i ticker in watchlist · Fonte: Alpaca Markets News API</div>
@@ -617,7 +649,7 @@ canvas#eqCanvas{width:100%;height:120px}
 
         <!-- INDEX SCANNER -->
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-          <div class="section-title" style="margin:0">🌍 SCANNER INDICI</div>
+          <div class="section-title" style="margin:0">🌍 SCANNER INDICI <span class="help-btn" onclick="openHelp('scanner')">?</span></div>
           <button onclick="refreshScanner()" id="btn-scan-idx" style="background:var(--gdk);color:var(--g);border:1px solid var(--gd);padding:5px 10px;font-family:'JetBrains Mono',monospace;font-size:9px;cursor:pointer;border-radius:6px">⟳ AGGIORNA</button>
         </div>
 
@@ -650,7 +682,7 @@ canvas#eqCanvas{width:100%;height:120px}
     <div class="page" id="page-news">
       <div class="page-pad">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
-          <div class="section-title" style="margin:0">📡 NOTIZIE LIVE</div>
+          <div class="section-title" style="margin:0">📡 NOTIZIE LIVE <span class="help-btn" onclick="openHelp('news')">?</span></div>
           <button onclick="refreshNews()" id="btn-refresh-news" style="background:var(--gdk);color:var(--g);border:1px solid var(--gd);padding:6px 12px;font-family:'JetBrains Mono',monospace;font-size:10px;cursor:pointer;border-radius:6px;letter-spacing:1px">⟳ AGGIORNA</button>
         </div>
 
@@ -677,6 +709,126 @@ canvas#eqCanvas{width:100%;height:120px}
       </div>
     </div>
 
+    <!-- GUIDA -->
+    <div class="page" id="page-guide">
+      <div class="page-pad">
+        <div style="text-align:center;margin-bottom:16px">
+          <div style="font-size:28px;margin-bottom:6px">📖</div>
+          <div style="font-size:14px;font-weight:700;color:var(--txb);letter-spacing:1px">GUIDA SOLENGO.TRADE</div>
+          <div style="font-size:10px;color:var(--txd);margin-top:4px">Tocca una sezione per saperne di più</div>
+        </div>
+        <div class="guide-card" onclick="openHelp('overview')">
+          <div class="guide-card-row">
+            <div class="guide-icon">🏠</div>
+            <div class="guide-card-txt"><div class="guide-card-title">Panoramica App</div><div class="guide-card-desc">Cos'è Solengo Trade e come funziona</div></div>
+            <div class="guide-arrow">›</div>
+          </div>
+        </div>
+        <div class="guide-card" onclick="openHelp('watchlist')">
+          <div class="guide-card-row">
+            <div class="guide-icon">📊</div>
+            <div class="guide-card-txt"><div class="guide-card-title">Mercato e Watchlist</div><div class="guide-card-desc">Aggiungi ticker, monitora prezzi e segnali</div></div>
+            <div class="guide-arrow">›</div>
+          </div>
+        </div>
+        <div class="guide-card" onclick="openHelp('agent')">
+          <div class="guide-card-row">
+            <div class="guide-icon">🤖</div>
+            <div class="guide-card-txt"><div class="guide-card-title">Agente AI</div><div class="guide-card-desc">Scansione watchlist, segnali e parametri di rischio</div></div>
+            <div class="guide-arrow">›</div>
+          </div>
+        </div>
+        <div class="guide-card" onclick="openHelp('autopilot')">
+          <div class="guide-card-row">
+            <div class="guide-icon">⚡</div>
+            <div class="guide-card-txt"><div class="guide-card-title">Autopilota</div><div class="guide-card-desc">Trading automatico con monitor SL/TP</div></div>
+            <div class="guide-arrow">›</div>
+          </div>
+        </div>
+        <div class="guide-card" onclick="openHelp('orders')">
+          <div class="guide-card-row">
+            <div class="guide-icon">📝</div>
+            <div class="guide-card-txt"><div class="guide-card-title">Ordini Manuali</div><div class="guide-card-desc">Come aprire posizioni LONG e SHORT</div></div>
+            <div class="guide-arrow">›</div>
+          </div>
+        </div>
+        <div class="guide-card" onclick="openHelp('positions')">
+          <div class="guide-card-row">
+            <div class="guide-icon">⚡</div>
+            <div class="guide-card-txt"><div class="guide-card-title">Posizioni e Storico</div><div class="guide-card-desc">Posizioni aperte, storico trade, kill all</div></div>
+            <div class="guide-arrow">›</div>
+          </div>
+        </div>
+        <div class="guide-card" onclick="openHelp('charts')">
+          <div class="guide-card-row">
+            <div class="guide-icon">📈</div>
+            <div class="guide-card-txt"><div class="guide-card-title">Grafici Candlestick</div><div class="guide-card-desc">Timeframe, candele e news correlate</div></div>
+            <div class="guide-arrow">›</div>
+          </div>
+        </div>
+        <div class="guide-card" onclick="openHelp('scanner')">
+          <div class="guide-card-row">
+            <div class="guide-icon">🌍</div>
+            <div class="guide-card-txt"><div class="guide-card-title">Scanner Indici</div><div class="guide-card-desc">Indici globali, commodity, settori per timeframe</div></div>
+            <div class="guide-arrow">›</div>
+          </div>
+        </div>
+        <div class="guide-card" onclick="openHelp('allocation')">
+          <div class="guide-card-row">
+            <div class="guide-icon">🎯</div>
+            <div class="guide-card-txt"><div class="guide-card-title">Allocazione Capitale</div><div class="guide-card-desc">Suddivisione rischio con AI advisor</div></div>
+            <div class="guide-arrow">›</div>
+          </div>
+        </div>
+        <div class="guide-card" onclick="openHelp('news')">
+          <div class="guide-card-row">
+            <div class="guide-icon">📡</div>
+            <div class="guide-card-txt"><div class="guide-card-title">Notizie Live</div><div class="guide-card-desc">Feed RSS, alert geopolitici, filtri</div></div>
+            <div class="guide-arrow">›</div>
+          </div>
+        </div>
+        <div class="guide-card" onclick="openHelp('stats')">
+          <div class="guide-card-row">
+            <div class="guide-icon">📈</div>
+            <div class="guide-card-txt"><div class="guide-card-title">Statistiche</div><div class="guide-card-desc">Equity curve, win rate, drawdown</div></div>
+            <div class="guide-arrow">›</div>
+          </div>
+        </div>
+        <div class="guide-card" onclick="openHelp('agentperf')">
+          <div class="guide-card-row">
+            <div class="guide-icon">🧠</div>
+            <div class="guide-card-txt"><div class="guide-card-title">Performance Agente</div><div class="guide-card-desc">Win rate per simbolo, fonti, pattern vincenti</div></div>
+            <div class="guide-arrow">›</div>
+          </div>
+        </div>
+        <div class="guide-card" onclick="openHelp('supabase')">
+          <div class="guide-card-row">
+            <div class="guide-icon">☁️</div>
+            <div class="guide-card-txt"><div class="guide-card-title">Supabase e Cloud</div><div class="guide-card-desc">Persistenza dati, sincronizzazione, memoria agente</div></div>
+            <div class="guide-arrow">›</div>
+          </div>
+        </div>
+        <div class="guide-card" onclick="openHelp('apikeys')">
+          <div class="guide-card-row">
+            <div class="guide-icon">🔑</div>
+            <div class="guide-card-txt"><div class="guide-card-title">API Keys e Backend</div><div class="guide-card-desc">Configurazione chiavi e proxy CORS</div></div>
+            <div class="guide-arrow">›</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- HELP SLIDE-UP PANEL -->
+  <div class="help-overlay" id="help-overlay" onclick="closeHelp()"></div>
+  <div class="help-panel" id="help-panel">
+    <div class="help-handle"></div>
+    <div class="help-header">
+      <div class="help-title" id="help-title">GUIDA</div>
+      <button class="help-close" onclick="closeHelp()">✕</button>
+    </div>
+    <div class="help-body" id="help-body"></div>
   </div>
 
   <!-- BOTTOM NAV -->
@@ -723,6 +875,10 @@ canvas#eqCanvas{width:100%;height:120px}
       <button class="more-item" onclick="goPageFromMore('settings')">
         <span style="font-size:22px">⚙️</span>
         <span>Impostazioni</span>
+      </button>
+      <button class="more-item" onclick="goPageFromMore('guide')">
+        <span style="font-size:22px">📖</span>
+        <span>Guida</span>
       </button>
     </div>
   </div>
@@ -2731,6 +2887,350 @@ function goPageFromMore(name) {
   document.getElementById('page-' + name).classList.add('active');
   if (name === 'stats') { updateStats(); setTimeout(drawEquity, 60); }
   if (name === 'positions') { renderPositions(); }
+}
+
+// ─────────────────────────────
+// HELP SYSTEM
+// ─────────────────────────────
+const HELP_CONTENT = {
+  overview: {
+    title: 'PANORAMICA APP',
+    body: `<h3>Cos'è Solengo Trade</h3>
+<p>Solengo Trade è una <span class="hl">console di paper trading</span> con intelligenza artificiale. Simula il trading di azioni USA (NYSE e NASDAQ) con denaro virtuale ($100.000 di partenza).</p>
+<p><span class="hl">Nessun denaro reale</span> viene mai investito. L'app è pensata per imparare, sperimentare strategie e testare l'agente AI.</p>
+<h3>Come funziona</h3>
+<ul>
+<li>Aggiungi ticker alla <span class="hl">Watchlist</span> per monitorarli</li>
+<li>L'<span class="hl">Agente AI</span> analizza prezzi, notizie e indici per generare segnali BUY/SELL/WAIT</li>
+<li>Puoi operare in <span class="hl">manuale</span> (approvi ogni trade) o in <span class="hl">automatico/autopilota</span></li>
+<li>I dati vengono salvati su <span class="hl">Supabase</span> nel cloud</li>
+</ul>
+<h3>Navigazione</h3>
+<ul>
+<li><span class="hl">Mercato</span> — Watchlist e prezzi in tempo reale</li>
+<li><span class="hl">Agente</span> — Controllo dell'AI trader</li>
+<li><span class="hl">Scanner</span> — Indici globali, allocazione, news ticker</li>
+<li><span class="hl">News</span> — Notizie dai feed RSS internazionali</li>
+<li><span class="hl">Altro</span> — Posizioni, statistiche, impostazioni, guida</li>
+</ul>
+<div class="tip"><b>Consiglio:</b> Al primo avvio le API key sono già configurate. L'app funziona subito senza registrazioni.</div>`
+  },
+
+  watchlist: {
+    title: 'MERCATO E WATCHLIST',
+    body: `<h3>Watchlist</h3>
+<p>La watchlist è la lista dei titoli che vuoi monitorare. I prezzi si aggiornano automaticamente ogni 60 secondi quando l'agente è attivo.</p>
+<h3>Aggiungere un ticker</h3>
+<ul>
+<li>Scrivi il <span class="hl">ticker symbol</span> nel campo in alto (es. TSLA, NVDA, AAPL)</li>
+<li>Premi <span class="hl">+ ADD</span> o Invio</li>
+<li>Usa i <span class="hl">chip rapidi</span> sotto la barra per aggiungere ticker popolari con un tap</li>
+</ul>
+<h3>Card del titolo</h3>
+<p>Ogni card mostra:</p>
+<ul>
+<li><span class="hl">Simbolo e nome</span> dell'azienda</li>
+<li><span class="hl">Prezzo attuale</span> in tempo reale</li>
+<li><span class="hl">Segnale AI</span> (BUY verde, SELL rosso, WAIT giallo, o vuoto se non scansionato)</li>
+<li>Pulsanti <span class="hl">GRAFICO</span> (candlestick) e <span class="hl">ORDINE</span> (apri posizione)</li>
+</ul>
+<p>Premi la <span class="hl">✕</span> per rimuovere un ticker dalla watchlist.</p>
+<div class="tip"><b>Fonti prezzi:</b> L'app usa una cascata di fonti — Twelve Data → Alpaca → Yahoo Finance (via proxy) — per massima affidabilità.</div>`
+  },
+
+  agent: {
+    title: 'AGENTE AI',
+    body: `<h3>Cos'è l'Agente</h3>
+<p>Un trader AI basato su <span class="hl">Anthropic Claude</span> che analizza ogni titolo in watchlist e genera segnali operativi.</p>
+<h3>Come attivarlo</h3>
+<ul>
+<li>Attiva il <span class="hl">toggle ON/OFF</span> — l'agente inizia a scansionare ogni 3 minuti</li>
+<li>Oppure premi <span class="hl">SCANSIONA WATCHLIST ORA</span> per una scansione immediata</li>
+</ul>
+<h3>Modalità</h3>
+<ul>
+<li><span class="hl">SUGGERIMENTO</span> — l'agente genera segnali ma non opera. Sei tu ad approvare ogni trade dal pannello segnali</li>
+<li><span class="hl">AUTOMATICO</span> — l'agente esegue i BUY automaticamente (rispettando il limite max posizioni)</li>
+</ul>
+<h3>Parametri</h3>
+<ul>
+<li><span class="hl">Rischio/Trade</span> — % del capitale per ogni operazione (default: 2%)</li>
+<li><span class="hl">Max Posizioni</span> — numero massimo di posizioni aperte contemporanee</li>
+<li><span class="hl">Stop Loss</span> — % di perdita massima prima della chiusura automatica</li>
+<li><span class="hl">Take Profit</span> — % di guadagno per chiusura automatica in profitto</li>
+</ul>
+<h3>Parametri per simbolo</h3>
+<p>Puoi impostare rischio, SL e TP diversi per ogni ticker. Usa i <span class="hl">preset</span> (Stabile/Dinamico/Volatile) per configurare rapidamente.</p>
+<h3>Cosa analizza l'AI</h3>
+<ul>
+<li>Prezzo attuale e variazione</li>
+<li>Indici di mercato (S&P 500, NASDAQ, VIX, etc.)</li>
+<li>Notizie specifiche del ticker (Alpaca News)</li>
+<li>Notizie macro e geopolitiche (feed RSS)</li>
+<li>Storico dei propri trade passati (apprendimento)</li>
+</ul>
+<div class="tip"><b>Confidenza:</b> Ogni segnale ha un punteggio da 1 a 10. L'agente esegue solo trade con confidenza sufficiente.</div>`
+  },
+
+  autopilot: {
+    title: 'AUTOPILOTA',
+    body: `<h3>Cos'è l'Autopilota</h3>
+<p>La modalità autopilota rende l'agente <span class="hl">completamente autonomo</span>. Compra, vende e gestisce le posizioni senza intervento umano.</p>
+<h3>Cosa fa</h3>
+<ul>
+<li><span class="hl">Scansione automatica</span> ogni 30 minuti su tutti i titoli in watchlist</li>
+<li><span class="hl">Esecuzione automatica</span> dei segnali BUY e SELL</li>
+<li><span class="hl">Monitor SL/TP</span> ogni 5 minuti — chiude le posizioni che toccano stop loss o take profit</li>
+<li><span class="hl">Chiusura LONG su SELL</span> — se il segnale è SELL e hai una posizione LONG aperta, la chiude</li>
+</ul>
+<h3>Come attivarlo</h3>
+<p>Attiva il toggle <span class="hl">AUTOPILOTA</span> nella pagina Agente. Si attivano automaticamente anche l'agente e la modalità automatica.</p>
+<h3>Monitor SL/TP</h3>
+<p>Ogni 5 minuti il sistema:</p>
+<ul>
+<li>Aggiorna i prezzi di tutte le posizioni aperte</li>
+<li>Confronta con Stop Loss e Take Profit impostati</li>
+<li>Chiude automaticamente le posizioni che hanno raggiunto il target</li>
+</ul>
+<div class="tip"><b>Sicurezza:</b> È tutto paper trading con denaro virtuale. Nessun rischio reale. Ideale per testare strategie mentre non sei davanti allo schermo.</div>`
+  },
+
+  orders: {
+    title: 'ORDINI MANUALI',
+    body: `<h3>Aprire un ordine</h3>
+<p>Dalla card di un titolo in watchlist, premi il pulsante <span class="hl">ORDINE</span>. Si apre il pannello ordine con:</p>
+<ul>
+<li><span class="hl">Ticker e prezzo</span> corrente</li>
+<li><span class="hl">Quantità</span> — numero di azioni da comprare/vendere</li>
+<li><span class="hl">Tipo ordine</span> — MARKET (esecuzione immediata) o LIMIT</li>
+<li><span class="hl">Stop Loss</span> — prezzo a cui chiudere in perdita</li>
+<li><span class="hl">Take Profit</span> — prezzo a cui chiudere in profitto</li>
+</ul>
+<h3>Indicatori di rischio</h3>
+<p>Il pannello mostra in tempo reale:</p>
+<ul>
+<li><span class="hl">Esposizione</span> — valore totale della posizione</li>
+<li><span class="hl">Max Perdita</span> — quanto puoi perdere con lo SL impostato</li>
+<li><span class="hl">R/R Ratio</span> — rapporto rischio/rendimento (risk/reward)</li>
+</ul>
+<h3>LONG vs SHORT</h3>
+<ul>
+<li><span class="hl">LONG (▲)</span> — compri, guadagni se il prezzo sale</li>
+<li><span class="hl">SHORT (▼)</span> — vendi allo scoperto, guadagni se il prezzo scende</li>
+</ul>
+<div class="tip"><b>Consiglio:</b> Un R/R Ratio di almeno 2:1 è considerato un buon rapporto (rischi 1 per guadagnare 2).</div>`
+  },
+
+  positions: {
+    title: 'POSIZIONI APERTE',
+    body: `<h3>Posizioni</h3>
+<p>Qui vedi tutte le <span class="hl">posizioni attualmente aperte</span>. Ogni posizione mostra:</p>
+<ul>
+<li>Ticker e direzione (LONG o SHORT)</li>
+<li>Prezzo di entrata e prezzo attuale</li>
+<li>P&L in $ e in % (verde = profitto, rosso = perdita)</li>
+<li>Livelli SL e TP se impostati</li>
+</ul>
+<h3>Chiudere una posizione</h3>
+<p>Premi <span class="hl">CHIUDI</span> su una singola posizione, oppure <span class="hl">KILL ALL</span> per chiudere tutto in un colpo.</p>
+<h3>Posizioni dell'agente</h3>
+<p>Le posizioni aperte dall'agente AI sono indicate con un badge. Quando vengono chiuse, il risultato (WIN/LOSS) viene salvato nella memoria dell'agente per l'apprendimento.</p>
+<div class="tip"><b>Nota:</b> Chiudere una posizione aggiorna equity, storico trade e tutte le statistiche in tempo reale.</div>`
+  },
+
+  history: {
+    title: 'STORICO TRADE',
+    body: `<h3>Storico</h3>
+<p>Lo storico mostra tutti i <span class="hl">trade chiusi</span> in ordine cronologico (più recenti in alto).</p>
+<p>Per ogni trade vedi:</p>
+<ul>
+<li>Ticker e direzione</li>
+<li>Prezzo di entrata → prezzo di uscita</li>
+<li>P&L in $ e in percentuale</li>
+<li>Colore: <span style="color:#00e676">verde = profitto</span>, <span style="color:#ff1744">rosso = perdita</span></li>
+</ul>
+<p>Lo storico è persistente — viene salvato su Supabase e sopravvive alla chiusura dell'app.</p>`
+  },
+
+  charts: {
+    title: 'GRAFICI CANDLESTICK',
+    body: `<h3>Aprire un grafico</h3>
+<p>Dalla card di un titolo, premi <span class="hl">GRAFICO</span>. Si apre un grafico a candele giapponesi interattivo.</p>
+<h3>Timeframe</h3>
+<ul>
+<li><span class="hl">15m</span> — candele da 15 minuti (intraday)</li>
+<li><span class="hl">1H</span> — candele orarie (2 settimane)</li>
+<li><span class="hl">1D</span> — candele giornaliere (6 mesi)</li>
+</ul>
+<h3>Leggere le candele</h3>
+<ul>
+<li><span style="color:#00e676">Candela verde</span> = il prezzo è salito (close > open)</li>
+<li><span style="color:#ff1744">Candela rossa</span> = il prezzo è sceso (close < open)</li>
+<li>Le <span class="hl">ombre</span> (linee sopra/sotto) mostrano il massimo e minimo del periodo</li>
+</ul>
+<h3>News correlate</h3>
+<p>Sotto il grafico appaiono le ultime notizie relative al ticker (via Alpaca News API).</p>
+<div class="tip"><b>Tecnologia:</b> I grafici usano la libreria TradingView Lightweight Charts, la stessa usata dai broker professionali.</div>`
+  },
+
+  scanner: {
+    title: 'SCANNER INDICI',
+    body: `<h3>Cos'è lo Scanner</h3>
+<p>Mostra in tempo reale le performance dei <span class="hl">principali indici mondiali</span>, commodity e settori USA.</p>
+<h3>Regioni</h3>
+<ul>
+<li><span class="hl">USA</span> — S&P 500, NASDAQ, Dow Jones, Russell 2000, VIX</li>
+<li><span class="hl">Europa</span> — DAX, FTSE MIB, CAC 40, IBEX, Euro Stoxx 50</li>
+<li><span class="hl">Asia</span> — Nikkei, Hang Seng, Shanghai, KOSPI, ASX</li>
+<li><span class="hl">Commodity</span> — Petrolio, Gas, Oro, Argento, Rame</li>
+<li><span class="hl">Settori</span> — Tech, Healthcare, Finance, Energy, Consumer</li>
+</ul>
+<h3>Timeframe</h3>
+<p>Seleziona il periodo: <span class="hl">Oggi, Settimana, Mese, Anno, 5 Anni, Sempre</span>.</p>
+<p>Ogni indice mostra variazione % e mini-barra colorata per una lettura rapida.</p>
+<div class="tip"><b>Uso:</b> Lo scanner ti dà il polso del mercato globale prima di decidere se operare. Se i mercati sono tutti rossi, l'agente AI ne terrà conto nei suoi segnali.</div>`
+  },
+
+  allocation: {
+    title: 'ALLOCAZIONE CAPITALE',
+    body: `<h3>Cos'è</h3>
+<p>Un tool per suddividere il capitale virtuale in tre categorie di rischio:</p>
+<ul>
+<li><span style="color:#00e676">Innovazione</span> — ETF e leader di mercato (rischio basso-medio)</li>
+<li><span style="color:#ff1744">Speculazione</span> — Titoli volatili e momentum (rischio alto)</li>
+<li><span style="color:var(--txd)">Liquidità</span> — Cash e strumenti stabili</li>
+</ul>
+<h3>Come usarlo</h3>
+<p>Muovi gli <span class="hl">slider</span> per regolare le percentuali. La barra colorata in basso mostra la distribuzione visivamente.</p>
+<h3>Raccomandazione AI</h3>
+<p>Premi <span class="hl">ANALIZZA E SUGGERISCI</span> — l'AI analizza lo stato attuale del mercato, le notizie e la tua watchlist per suggerire una distribuzione ottimale.</p>
+<div class="tip"><b>Regola generale:</b> Più il mercato è volatile (VIX alto), più dovresti tenere in Liquidità.</div>`
+  },
+
+  tickernews: {
+    title: 'NEWS TICKER',
+    body: `<h3>Cos'è</h3>
+<p>Mostra le ultime notizie specifiche per ogni ticker della tua watchlist, fornite da <span class="hl">Alpaca Markets News API</span>.</p>
+<h3>Come funziona</h3>
+<ul>
+<li>Per ogni ticker vengono caricate le <span class="hl">ultime 5 notizie</span></li>
+<li>Mostra titolo, fonte e tempo trascorso (es. "2h fa")</li>
+<li>Toccando una notizia si apre il link originale</li>
+</ul>
+<p>Premi <span class="hl">⟳</span> per aggiornare manualmente le news.</p>
+<h3>Uso nell'agente AI</h3>
+<p>Queste notizie vengono automaticamente inserite nel prompt dell'agente AI, permettendogli di considerare informazioni specifiche del titolo nei suoi segnali.</p>`
+  },
+
+  news: {
+    title: 'NOTIZIE LIVE',
+    body: `<h3>Feed RSS</h3>
+<p>La sezione news aggrega notizie da <span class="hl">6 fonti internazionali</span>:</p>
+<ul>
+<li><span class="hl">CNBC</span> — Top News mercati USA</li>
+<li><span class="hl">MarketWatch</span> — Top Stories finanziarie</li>
+<li><span class="hl">Investing.com</span> — News mercati globali</li>
+<li><span class="hl">BBC World</span> — Geopolitica internazionale</li>
+<li><span class="hl">Financial Times</span> — Finanza globale</li>
+<li><span class="hl">Ars Technica</span> — Tech e innovazione</li>
+</ul>
+<h3>Filtri</h3>
+<p>Usa i chip in alto per filtrare: <span class="hl">Tutto, Geopolitica, Mercati, Energia, Tech</span>.</p>
+<h3>Alert Geopolitico</h3>
+<p>Se vengono rilevate notizie ad alto impatto (guerre, sanzioni, crisi energetiche), appare un <span style="color:#ffd600">banner giallo di alert</span> con i settori impattati.</p>
+<div class="tip"><b>Per l'agente:</b> Le notizie vengono inserite nel contesto dell'AI. Un alert geopolitico attivo influenzerà i segnali dell'agente (più cauto, più WAIT).</div>`
+  },
+
+  stats: {
+    title: 'STATISTICHE',
+    body: `<h3>KPI principali</h3>
+<ul>
+<li><span class="hl">Equity</span> — valore totale del portafoglio</li>
+<li><span class="hl">P&L Totale</span> — profitto/perdita complessiva in $</li>
+<li><span class="hl">Win Rate</span> — percentuale di trade chiusi in profitto</li>
+<li><span class="hl">Trade Chiusi</span> — numero totale di operazioni completate</li>
+<li><span class="hl">Miglior/Peggior Trade</span> — performance estremi</li>
+<li><span class="hl">Media P&L</span> — rendimento medio per trade</li>
+<li><span class="hl">Max Drawdown</span> — calo massimo dall'equity di picco (misura del rischio)</li>
+</ul>
+<h3>Curva Equity</h3>
+<p>Il grafico mostra l'andamento del capitale nel tempo. <span style="color:#00e676">Verde</span> = sopra il capitale iniziale, <span style="color:#ff1744">rosso</span> = sotto.</p>
+<div class="tip"><b>Drawdown:</b> Un Max Drawdown del 10% significa che in un certo momento avevi perso il 10% dal punto più alto. Sotto il 15% è considerato accettabile.</div>`
+  },
+
+  agentperf: {
+    title: 'PERFORMANCE AGENTE',
+    body: `<h3>Dashboard dedicata</h3>
+<p>Mostra le statistiche dei soli trade eseguiti dall'agente AI (esclude quelli manuali).</p>
+<h3>Metriche</h3>
+<ul>
+<li><span class="hl">Win Rate Agente</span> — % di trade agente chiusi in profitto</li>
+<li><span class="hl">Trade Agente</span> — numero di trade completati dall'AI</li>
+<li><span class="hl">P&L Agente</span> — rendimento complessivo dei trade AI</li>
+<li><span class="hl">Conf. Media</span> — confidenza media dei segnali generati</li>
+</ul>
+<h3>Win Rate per Simbolo</h3>
+<p>Barra colorata per ogni ticker — mostra su quali titoli l'agente è più preciso.</p>
+<h3>Affidabilità Fonti</h3>
+<p>Percentuale di successo per fonte informativa (RSS, Alpaca News, alert geo, etc.). Aiuta a capire quali fonti producono i segnali migliori.</p>
+<h3>Pattern Vincenti</h3>
+<p>Le combinazioni direzione+ticker che hanno generato più profitti (es. "LONG TSLA — 5x avg +2.3%").</p>
+<h3>Equity Curve Agente</h3>
+<p>Grafico separato che mostra solo l'equity dei trade dell'agente, partendo da base 100.</p>
+<h3>Ultimi 10 Trade</h3>
+<p>Tabella con data, simbolo, direzione, confidenza, P&L e esito degli ultimi trade agente.</p>
+<div class="tip"><b>Memoria:</b> L'agente usa questi dati per migliorarsi. I pattern vincenti e le fonti affidabili vengono inclusi nel prompt AI per le prossime decisioni.</div>`
+  },
+
+  supabase: {
+    title: 'SUPABASE E CLOUD',
+    body: `<h3>Cos'è Supabase</h3>
+<p><span class="hl">Supabase</span> è il database cloud che salva tutti i tuoi dati. Senza Supabase l'app funziona ma i dati vanno persi alla chiusura.</p>
+<h3>Cosa viene salvato</h3>
+<ul>
+<li><span class="hl">Watchlist</span> — i ticker che monitori</li>
+<li><span class="hl">Posizioni aperte</span> — con prezzi e SL/TP</li>
+<li><span class="hl">Trade chiusi</span> — storico completo</li>
+<li><span class="hl">Storico equity</span> — per il grafico della curva</li>
+<li><span class="hl">Memoria agente</span> — ogni segnale generato con esito</li>
+</ul>
+<h3>Configurazione</h3>
+<p>Le credenziali sono <span class="hl">pre-configurate</span>. Se vedi "✓ Connesso" nelle impostazioni, tutto funziona.</p>
+<p>Se devi modificarle, vai in <span class="hl">Impostazioni → Supabase</span> e inserisci URL e Anon Key del tuo progetto.</p>
+<div class="tip"><b>Sicurezza:</b> La Anon Key è pubblica per design (protetta da RLS). I dati sono isolati per utente.</div>`
+  },
+
+  apikeys: {
+    title: 'API KEYS E BACKEND',
+    body: `<h3>Chiavi API</h3>
+<p>L'app usa diversi servizi esterni. Le chiavi sono salvate <span class="hl">solo su questo dispositivo</span> (localStorage) e non vengono mai inviate ad altri server.</p>
+<h3>Servizi</h3>
+<ul>
+<li><span class="hl">Anthropic (Claude)</span> — Motore AI dell'agente. Chiave che inizia con sk-ant-</li>
+<li><span class="hl">Alpaca Markets</span> — Prezzi real-time e news per ticker. KEY ID + SECRET KEY</li>
+<li><span class="hl">Twelve Data</span> (opzionale) — Fonte prezzi alternativa, 800 req/giorno gratis</li>
+</ul>
+<h3>Backend Proxy</h3>
+<p>L'app usa un <span class="hl">proxy backend su Vercel</span> per risolvere problemi CORS con Yahoo Finance e RSS. È pre-configurato a:</p>
+<p style="color:var(--g);font-size:11px">solengo-trade-api.vercel.app</p>
+<h3>Cascata prezzi</h3>
+<p>L'app prova le fonti in ordine: <span class="hl">Twelve Data → Alpaca → Yahoo (via proxy)</span>. Se una fallisce, passa alla successiva.</p>
+<div class="tip"><b>Pre-configurato:</b> Al primo avvio tutte le chiavi vengono caricate automaticamente. Non devi registrarti da nessuna parte per usare l'app.</div>`
+  }
+};
+
+function openHelp(key) {
+  const content = HELP_CONTENT[key];
+  if (!content) return;
+  document.getElementById('help-title').textContent = content.title;
+  document.getElementById('help-body').innerHTML = content.body;
+  document.getElementById('help-overlay').classList.add('open');
+  requestAnimationFrame(() => document.getElementById('help-panel').classList.add('open'));
+}
+
+function closeHelp() {
+  document.getElementById('help-panel').classList.remove('open');
+  setTimeout(() => document.getElementById('help-overlay').classList.remove('open'), 300);
 }
 
 // ─── PWA SPLASH ───
