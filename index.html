@@ -1217,6 +1217,10 @@ window.addEventListener('load', async () => {
   fetchNews();
   setTimeout(loadAllIndices, 2000);
   setTimeout(refreshSentiment, 3000);
+
+  // Refresh all prices every 60 seconds + update positions P&L
+  setTimeout(refreshAllPrices, 4000); // first refresh shortly after load
+  setInterval(refreshAllPrices, 60 * 1000); // then every 60s
 });
 
 // ─────────────────────────────
@@ -1332,6 +1336,28 @@ async function fetchPrice(s) {
       if (p) { s.price = p; renderMarket(); sbUpsertWatchItem(s); }
     }
   } catch(e) {}
+}
+
+async function refreshAllPrices() {
+  let updated = 0;
+  for (const s of watchlist) {
+    try {
+      const oldPrice = s.price;
+      await fetchPrice(s);
+      if (s.price !== oldPrice && s.price > 0) updated++;
+    } catch(e) {}
+  }
+  // Sync position prices with watchlist
+  for (const p of positions) {
+    const s = watchlist.find(x => x.sym === p.sym);
+    if (s && s.price > 0) p.current = s.price;
+  }
+  if (positions.length) {
+    updateTopbar();
+    renderPositions();
+    document.getElementById('m-pos').textContent = positions.length;
+  }
+  if (updated > 0) renderMarket();
 }
 
 // ─────────────────────────────
@@ -1907,10 +1933,11 @@ function getEquity() {
 function updateTopbar() {
   const eq = getEquity();
   const pnl = eq - CAP;
-  document.getElementById('m-equity').textContent = '$' + Math.round(eq / 1000) + 'K';
+  document.getElementById('m-equity').textContent = eq >= 1000 ? '$' + (eq / 1000).toFixed(1) + 'K' : '$' + Math.round(eq);
   const pe = document.getElementById('m-pnl');
   pe.textContent = (pnl >= 0 ? '+' : '') + '$' + pnl.toFixed(0);
   pe.className = 'metric-v ' + (pnl >= 0 ? 'up' : 'dn');
+  document.getElementById('m-pos').textContent = positions.length;
   const wins = closed.filter(t => t.pnl > 0).length;
   const wr = closed.length > 0 ? Math.round(wins / closed.length * 100) + '%' : '—';
   document.getElementById('m-wr').textContent = wr;
