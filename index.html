@@ -679,7 +679,7 @@ canvas#eqCanvas{width:100%;height:120px}
           <span class="region-tab" onclick="setRegion('usa',this)">🇺🇸 USA</span>
           <span class="region-tab" onclick="setRegion('eu',this)">🇪🇺 Europa</span>
           <span class="region-tab" onclick="setRegion('asia',this)">🌏 Asia</span>
-          <span class="region-tab" onclick="setRegion('commodity',this)">⛽ Commodity</span>
+          <span class="region-tab" onclick="setRegion('commodity',this)">⛽ Materie Prime</span>
           <span class="region-tab" onclick="setRegion('sector',this)">📊 Settori</span>
         </div>
 
@@ -2255,11 +2255,11 @@ const ALL_INDICES = [
   { sym:'XLE',    name:'Energia',           region:'sector',    type:'dynamic'  },
   { sym:'XLK',    name:'Tecnologia',        region:'sector',    type:'dynamic'  },
   { sym:'XLF',    name:'Finanziari',        region:'sector',    type:'stable'   },
-  { sym:'XLV',    name:'Healthcare',        region:'sector',    type:'stable'   },
+  { sym:'XLV',    name:'Sanità',             region:'sector',    type:'stable'   },
   { sym:'ITA',    name:'Difesa & Aerospazio',region:'sector',   type:'dynamic'  },
-  { sym:'ARKK',   name:'ARK Innovation',    region:'sector',    type:'volatile' },
+  { sym:'ARKK',   name:'ARK Innovazione',   region:'sector',    type:'volatile' },
   { sym:'SOXX',   name:'Semiconduttori',    region:'sector',    type:'volatile' },
-  { sym:'GLD',    name:'Gold ETF',          region:'sector',    type:'stable'   },
+  { sym:'GLD',    name:'Oro ETF',            region:'sector',    type:'stable'   },
 ];
 
 let idxData = {};
@@ -2344,6 +2344,7 @@ function renderScanner() {
     const isTopGainer = rank === 0;
     const isTopLoser = rank === withData.length - 1 && pct < 0;
     const regionFlag = { usa:'🇺🇸', eu:'🇪🇺', asia:'🌏', commodity:'⛽', sector:'📊' }[idx.region] || '';
+    const regionLabel = { usa:'USA', eu:'EUROPA', asia:'ASIA', commodity:'MATERIE PRIME', sector:'SETTORI' }[idx.region] || idx.region.toUpperCase();
 
     // Mini sparkline bars (last 5 closes normalized)
     const closes = d.closes.slice(-5);
@@ -2358,7 +2359,7 @@ function renderScanner() {
       <div>
         <div class="idx-sym">${idx.sym.replace('^','').replace('.MI','').replace('.SS','')}</div>
         <div class="idx-name">${idx.name}</div>
-        <div class="idx-region">${regionFlag} ${idx.region.toUpperCase()} · ${idx.type.toUpperCase()}</div>
+        <div class="idx-region">${regionFlag} ${regionLabel} · ${{stable:'STABILE',dynamic:'DINAMICO',volatile:'VOLATILE'}[idx.type] || idx.type.toUpperCase()}</div>
       </div>
       <div>
         <div class="idx-price">$${d.price < 100 ? d.price.toFixed(2) : Math.round(d.price).toLocaleString()}</div>
@@ -2459,6 +2460,16 @@ async function refreshSentiment() {
     return;
   }
 
+  // Render immediately in English
+  renderTickerNewsList(withData, list);
+
+  // Translate all ticker news to Italian
+  const allTickerNews = withData.flatMap(r => r.news);
+  await translateNewsBatch(allTickerNews);
+  renderTickerNewsList(withData, list);
+}
+
+function renderTickerNewsList(withData, list) {
   list.innerHTML = withData.map(r => {
     const newsHtml = r.news.map(n => {
       const ago = timeAgo(n.date);
@@ -2581,11 +2592,17 @@ async function loadChartNews(sym) {
   const div = document.getElementById('chart-news');
   const news = await fetchAlpacaTickerNews(sym, 5);
   if (!news.length) { div.innerHTML = ''; return; }
-  div.innerHTML = '<div style="font-size:9px;color:var(--txd);letter-spacing:1px;margin-bottom:4px">ULTIME NEWS</div>' +
-    news.map(n => `<a href="${n.url}" target="_blank" rel="noopener" style="display:block;padding:4px 0;border-bottom:1px solid var(--brd);text-decoration:none;color:inherit">
-      <div style="font-size:10px;color:var(--txb);line-height:1.3">${n.title}</div>
-      <div style="font-size:8px;color:var(--txd)">${n.source} · ${timeAgo(n.date)}</div>
-    </a>`).join('');
+  // Show immediately, then translate
+  const renderChartNewsList = () => {
+    div.innerHTML = '<div style="font-size:9px;color:var(--txd);letter-spacing:1px;margin-bottom:4px">ULTIME NEWS</div>' +
+      news.map(n => `<a href="${n.url}" target="_blank" rel="noopener" style="display:block;padding:4px 0;border-bottom:1px solid var(--brd);text-decoration:none;color:inherit">
+        <div style="font-size:10px;color:var(--txb);line-height:1.3">${n.title}</div>
+        <div style="font-size:8px;color:var(--txd)">${n.source} · ${timeAgo(n.date)}</div>
+      </a>`).join('');
+  };
+  renderChartNewsList();
+  await translateNewsBatch(news);
+  renderChartNewsList();
 }
 
 // ─────────────────────────────
@@ -2787,6 +2804,10 @@ let newsFilter = 'all';
 
 // RSS feed URLs (resolved via backend proxy at runtime)
 const NEWS_FEEDS = [
+  // Feed italiani (già in italiano, no traduzione necessaria)
+  { feed: 'https://www.milanofinanza.it/rss/', source: 'MF Milano Finanza', category: 'market', lang: 'it' },
+  { feed: 'https://www.ilsole24ore.com/rss/finanza.xml', source: 'Il Sole 24 Ore', category: 'market', lang: 'it' },
+  // Feed internazionali (tradotti in italiano via AI)
   { feed: 'https://www.cnbc.com/id/100003114/device/rss/rss.html', source: 'CNBC', category: 'market' },
   { feed: 'https://feeds.content.dowjones.io/public/rss/mw_topstories', source: 'MarketWatch', category: 'market' },
   { feed: 'https://www.investing.com/rss/news.rss', source: 'Investing.com', category: 'market' },
@@ -2805,10 +2826,51 @@ const BEAR_KEYWORDS = ['fall','drop','crash','war','sanction','attack','fear','r
 const SECTOR_IMPACT = {
   'iran': { up: ['Energia (XLE)', 'Difesa (LMT, RTX)', 'Oro (GLD)'], down: ['Compagnie aeree', 'Trasporti', 'Turismo'] },
   'war': { up: ['Difesa', 'Energia', 'Oro'], down: ['Mercati globali', 'Tecnologia', 'Lusso'] },
-  'oil': { up: ['XLE', 'CVX', 'XOM'], down: ['Airlines', 'Trasporti'] },
-  'tariff': { up: ['Produzione USA'], down: ['Tech importazioni', 'Retail'] },
-  'rate': { up: ['Banche', 'Finanziari'], down: ['Growth stocks', 'REIT'] }
+  'oil': { up: ['XLE', 'CVX', 'XOM'], down: ['Compagnie aeree', 'Trasporti'] },
+  'tariff': { up: ['Produzione USA'], down: ['Importazioni tech', 'Commercio al dettaglio'] },
+  'rate': { up: ['Banche', 'Finanziari'], down: ['Titoli crescita', 'Immobiliare (REIT)'] }
 };
+
+// Batch translate news titles+descriptions to Italian via Claude
+async function translateNewsBatch(items) {
+  const aiKey = getSetting('ai-key');
+  if (!aiKey || !items.length) return items;
+  // Only translate items that look English (skip Italian sources and already translated)
+  const toTranslate = items.filter(n => !n._translated && n._lang !== 'it' && /\b(the|is|are|and|for|with|has|was|will|from|that|this|have|been|not|but|its|can|may|new|says|said|after|over|into|more|could|would|about)\b/i.test(n.title));
+  if (!toTranslate.length) return items;
+
+  // Batch in groups of 15 for efficiency
+  for (let i = 0; i < toTranslate.length; i += 15) {
+    const batch = toTranslate.slice(i, i + 15);
+    const numbered = batch.map((n, idx) => `${idx + 1}. ${n.title}${n.description ? ' ||| ' + n.description : ''}`).join('\n');
+    try {
+      const res = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-api-key': aiKey, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
+        body: JSON.stringify({
+          model: 'claude-haiku-4-5-20251001',
+          max_tokens: 2000,
+          messages: [{ role: 'user', content: `Traduci questi titoli di notizie finanziarie in italiano. Mantieni il tono giornalistico, conciso e professionale. Se c'è "|||" separa titolo e descrizione.\n\nRispondi SOLO con le traduzioni numerate nello stesso formato:\n1. TITOLO ||| DESCRIZIONE\n2. TITOLO ||| DESCRIZIONE\n...\n\n${numbered}` }]
+        })
+      });
+      if (!res.ok) continue;
+      const data = await res.json();
+      const txt = data.content?.[0]?.text || '';
+      const lines = txt.split('\n').filter(l => /^\d+\./.test(l.trim()));
+      lines.forEach(line => {
+        const m = line.match(/^(\d+)\.\s*(.+)/);
+        if (!m) return;
+        const idx = parseInt(m[1]) - 1;
+        if (idx < 0 || idx >= batch.length) return;
+        const parts = m[2].split('|||').map(s => s.trim());
+        batch[idx].title = parts[0] || batch[idx].title;
+        if (parts[1]) batch[idx].description = parts[1];
+        batch[idx]._translated = true;
+      });
+    } catch(e) { /* translation failed, keep originals */ }
+  }
+  return items;
+}
 
 async function fetchNews() {
   allNews = [];
@@ -2833,7 +2895,8 @@ async function fetchNews() {
         date: item.pubDate ? new Date(item.pubDate) : new Date(),
         source: src.source,
         category: src.category,
-        description: item.description?.replace(/<[^>]*>/g, '').trim().substring(0, 150)
+        description: item.description?.replace(/<[^>]*>/g, '').trim().substring(0, 150),
+        _lang: src.lang || 'en'
       })).filter(n => n.title);
     } catch(e) { return []; }
   });
@@ -2844,13 +2907,18 @@ async function fetchNews() {
   // Sort by date desc
   allNews.sort((a, b) => b.date - a.date);
 
-  // Analyze for geo alerts
+  // Analyze for geo alerts (before translation, keywords are English)
   analyzeGeoAlert();
+  // Render immediately with English, then translate
   renderNews();
 
   const cnt = allNews.filter(n => isAlertNews(n)).length;
   document.getElementById('nb-news').textContent = cnt;
   document.getElementById('nb-news').className = 'nav-badge' + (cnt > 0 ? ' show' : '');
+
+  // Translate to Italian in background
+  await translateNewsBatch(allNews);
+  renderNews();
 }
 
 function isAlertNews(n) {
@@ -2927,13 +2995,13 @@ function renderNews() {
     
     return `<div class="news-card ${isAlert ? 'alert' : cat}" onclick="window.open('${n.link}','_blank')">
       <div class="nc-source">
-        <span>${n.source}</span>
+        <span>${n.source}${n._translated ? ' · 🇮🇹' : ''}</span>
         <span>${timeAgo}</span>
       </div>
       <div class="nc-title">${n.title}</div>
       <div class="nc-tags">
         <span class="nc-tag ${cat === 'geo' ? 'geo' : 'neutral'}">${cat === 'geo' ? '🌍 GEOPOLIT' : cat === 'energy' ? '⛽ ENERGIA' : cat === 'tech' ? '💻 TECH' : '📊 MERCATI'}</span>
-        <span class="nc-tag ${sent}">${sent === 'bull' ? '▲ BULLISH' : sent === 'bear' ? '▼ BEARISH' : '◆ NEUTRO'}</span>
+        <span class="nc-tag ${sent}">${sent === 'bull' ? '▲ RIALZISTA' : sent === 'bear' ? '▼ RIBASSISTA' : '◆ NEUTRO'}</span>
         ${isAlert ? '<span class="nc-tag geo">⚠ ALERT</span>' : ''}
       </div>
       ${impact ? `<div class="nc-impact ${sent}">
