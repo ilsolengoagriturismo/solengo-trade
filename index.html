@@ -315,8 +315,16 @@ canvas#eqCanvas{width:100%;height:120px}
 .sbtn-buy:active{background:rgba(0,230,118,.3)}
 .sbtn-sell:active{background:rgba(255,23,68,.3)}
 .sheet-close{position:absolute;top:14px;right:16px;background:none;border:none;color:var(--txd);font-size:18px;cursor:pointer;padding:4px}
+/* chart sheet */
+.chart-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:250;backdrop-filter:blur(4px)}
+.chart-overlay.open{display:flex;align-items:flex-end}
+.chart-sheet{width:100%;max-width:480px;margin:0 auto;background:var(--bg2);border-top:2px solid var(--g);border-radius:16px 16px 0 0;padding:14px;position:relative}
+.chart-tf-tabs{display:flex;gap:6px;margin:10px 0}
+.chart-tf{font-size:9px;padding:4px 10px;border-radius:10px;border:1px solid var(--brd);color:var(--txd);cursor:pointer;letter-spacing:1px;background:none;font-family:'JetBrains Mono',monospace}
+.chart-tf.active{background:var(--gdk);color:var(--g);border-color:var(--gd)}
 </style>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
 </head>
 <body>
 
@@ -488,11 +496,18 @@ canvas#eqCanvas{width:100%;height:120px}
           <div id="sb-status" style="font-size:10px;margin-top:6px;letter-spacing:1px"></div>
         </div>
         <div class="settings-section">
+          <div class="ss-title">BACKEND PROXY</div>
+          <div style="font-size:10px;color:var(--txd);margin-bottom:10px;line-height:1.6">URL del backend proxy per risolvere problemi CORS con Yahoo Finance, Stocktwits e RSS.</div>
+          <input type="text" class="inp-full" id="set-backend-url" placeholder="Backend URL (https://solengo-trade-api.vercel.app)">
+          <button class="btn-save" onclick="saveBackend()" style="margin-bottom:4px">💾 SALVA BACKEND</button>
+        </div>
+        <div class="settings-section">
           <div class="ss-title">API KEYS</div>
           <div style="font-size:10px;color:var(--txd);margin-bottom:10px;line-height:1.6">Le chiavi sono salvate solo su questo dispositivo e non vengono mai trasmesse ad altri server.</div>
           <input type="password" class="inp-full" id="set-ai-key" placeholder="Anthropic API Key (sk-ant-api03-...)">
           <input type="text" class="inp-full" id="set-alp-key" placeholder="Alpaca KEY ID">
           <input type="password" class="inp-full" id="set-alp-sec" placeholder="Alpaca SECRET KEY">
+          <input type="password" class="inp-full" id="set-td-key" placeholder="Twelve Data API Key">
           <button class="btn-save" onclick="saveKeys()">💾 SALVA CHIAVI</button>
         </div>
         <div class="settings-section">
@@ -716,6 +731,27 @@ canvas#eqCanvas{width:100%;height:120px}
   </div>
 </div>
 
+<!-- CHART SHEET -->
+<div class="chart-overlay" id="chart-overlay" onclick="closeChart(event)">
+  <div class="chart-sheet">
+    <button class="sheet-close" onclick="closeChart()">✕</button>
+    <div class="sheet-handle"></div>
+    <div style="display:flex;justify-content:space-between;align-items:center">
+      <div>
+        <div class="sheet-title" id="chart-title" style="margin:0">AAPL</div>
+        <div class="sheet-name" id="chart-name">—</div>
+      </div>
+      <div class="chart-tf-tabs">
+        <button class="chart-tf active" onclick="setChartTf('15min',this)">15m</button>
+        <button class="chart-tf" onclick="setChartTf('1h',this)">1H</button>
+        <button class="chart-tf" onclick="setChartTf('1d',this)">1D</button>
+      </div>
+    </div>
+    <div id="chart-container" style="width:100%;height:300px;margin-top:8px;border-radius:8px;overflow:hidden"></div>
+    <div id="chart-news" style="margin-top:10px;max-height:120px;overflow-y:auto"></div>
+  </div>
+</div>
+
 <!-- TOAST -->
 <div class="toast" id="toast"></div>
 
@@ -899,6 +935,7 @@ window.addEventListener('load', async () => {
   if (!localStorage.getItem('st_alp-sec')) localStorage.setItem('st_alp-sec', _k('kbCRkeDlHROZkeEVWdU1kSTNnayMGO','=4EW0ZUNGVEVIhnT2oXN5cjVOlGaE5'));
   if (!localStorage.getItem('st_sb-url')) localStorage.setItem('st_sb-url', _k('yhWboNXezFGdlNGel9yL6MHc0RHa','==wbj5SZzFmYhBXdz5CdmdWcqFmc'));
   if (!localStorage.getItem('st_sb-key')) localStorage.setItem('st_sb-key', _k('zlTbjl2dplEMaJjW4B3VZlnSIFGdoJzY14EWZBjVykFNW1WS2kUaaxmSul0cJNlW6ZUbZhmQYRmeKl2Tp10MjBnS5VmL5o0QWhFcrlkNJN0Y1IlbJNXSp5UMJpXVJpUaPl2YHJGaKlXZ','==QQ65Ub0YlYNhTQnV2cwoWVNtGS65WTvlzUsB1TQl0VxAFeqNzSCZWL4sGduADWPNTTE5UeNRUT0EkaNZTSDNGNW1WSztmeOp3ZE50MRpmTzUkaPlWUYlFcKNETpRjMiVnRtlkNJNlW'));
+  if (!localStorage.getItem('st_backend-url')) localStorage.setItem('st_backend-url', 'https://solengo-trade-api.vercel.app');
   loadKeys();
   loadSupabaseConfig();
   // Try Supabase — load data from cloud if configured
@@ -952,8 +989,12 @@ function renderMarket() {
           <div style="margin-top:4px">${renderSignalBadge(s.signal)}</div>
         </div>
       </div>
+      <div style="display:flex;gap:6px;margin-top:8px">
+        <button onclick="openChart('${s.sym}','${s.name}');event.stopPropagation()" style="flex:1;background:var(--gdk);color:var(--g);border:1px solid var(--gd);padding:5px 0;font-family:'JetBrains Mono',monospace;font-size:9px;cursor:pointer;border-radius:6px;letter-spacing:1px">📈 GRAFICO</button>
+        <button onclick="openSheet(watchlist.find(x=>x.sym==='${s.sym}'));event.stopPropagation()" style="flex:1;background:var(--bg3);color:var(--txb);border:1px solid var(--brd);padding:5px 0;font-family:'JetBrains Mono',monospace;font-size:9px;cursor:pointer;border-radius:6px;letter-spacing:1px">📋 ORDINE</button>
+      </div>
     `;
-    div.onclick = (e) => { if (!e.target.classList.contains('card-rm')) openSheet(s); };
+    div.onclick = (e) => { if (!e.target.closest('button')) openChart(s.sym, s.name); };
     list.appendChild(div);
   });
 }
@@ -986,13 +1027,24 @@ function removeSym(sym, e) {
   sbDeleteWatchItem(sym);
 }
 
-const CORS_PROXY = 'https://api.allorigins.win/raw?url=';
-
-function yfUrl(path) {
-  return CORS_PROXY + encodeURIComponent('https://query1.finance.yahoo.com' + path);
+function backendUrl() {
+  return (getSetting('backend-url') || 'https://solengo-trade-api.vercel.app').replace(/\/$/, '');
 }
 
 async function fetchPrice(s) {
+  // 1. Try Twelve Data (real-time)
+  const tdKey = getSetting('td-key');
+  if (tdKey) {
+    try {
+      const r = await fetch(`https://api.twelvedata.com/price?symbol=${s.sym}&apikey=${tdKey}`);
+      if (r.ok) {
+        const d = await r.json();
+        const p = parseFloat(d.price);
+        if (p > 0) { s.price = p; renderMarket(); sbUpsertWatchItem(s); return; }
+      }
+    } catch(e) {}
+  }
+  // 2. Try Alpaca
   const ak = getSetting('alp-key'), as = getSetting('alp-sec');
   if (ak && as) {
     try {
@@ -1005,8 +1057,9 @@ async function fetchPrice(s) {
       }
     } catch(e) {}
   }
+  // 3. Fallback: Yahoo via backend proxy
   try {
-    const r = await fetch(yfUrl(`/v8/finance/chart/${s.sym}?interval=1d&range=1d`));
+    const r = await fetch(`${backendUrl()}/api/yahoo/${s.sym}?range=1d&interval=1d`);
     if (r.ok) {
       const d = await r.json();
       const p = d?.chart?.result?.[0]?.meta?.regularMarketPrice;
@@ -1171,6 +1224,12 @@ async function runAgentScan() {
     if (!sp.active) { alog(s.sym + ': saltato (inattivo)', 'info'); continue; }
     try {
       alog('Analisi ' + s.sym + '...', 'info');
+      // Pre-fetch ticker news for AI context if not cached
+      if (!window._tickerNewsCache?.[s.sym]) {
+        const tn = await fetchAlpacaTickerNews(s.sym, 5);
+        if (!window._tickerNewsCache) window._tickerNewsCache = {};
+        if (tn.length) window._tickerNewsCache[s.sym] = tn;
+      }
       const res = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
         headers: { 'Content-Type':'application/json', 'x-api-key':aiKey, 'anthropic-version':'2023-06-01', 'anthropic-dangerous-direct-browser-access':'true' },
@@ -1398,11 +1457,18 @@ function alog(msg, type = 'info') {
 function getSetting(key) {
   try { return localStorage.getItem('st_' + key) || ''; } catch(e) { return ''; }
 }
+function saveBackend() {
+  try {
+    localStorage.setItem('st_backend-url', document.getElementById('set-backend-url').value.trim());
+    toast('✓ Backend URL salvato');
+  } catch(e) { toast('Errore salvataggio', true); }
+}
 function saveKeys() {
   try {
     localStorage.setItem('st_ai-key', document.getElementById('set-ai-key').value.trim());
     localStorage.setItem('st_alp-key', document.getElementById('set-alp-key').value.trim());
     localStorage.setItem('st_alp-sec', document.getElementById('set-alp-sec').value.trim());
+    localStorage.setItem('st_td-key', document.getElementById('set-td-key').value.trim());
     toast('✓ Chiavi salvate');
   } catch(e) { toast('Errore salvataggio', true); }
 }
@@ -1411,6 +1477,8 @@ function loadKeys() {
     document.getElementById('set-ai-key').value = getSetting('ai-key') || '';
     document.getElementById('set-alp-key').value = getSetting('alp-key') || '';
     document.getElementById('set-alp-sec').value = getSetting('alp-sec') || '';
+    document.getElementById('set-td-key').value = getSetting('td-key') || '';
+    document.getElementById('set-backend-url').value = getSetting('backend-url') || 'https://solengo-trade-api.vercel.app';
   } catch(e) {}
 }
 
@@ -1472,7 +1540,7 @@ const TF_MAP = {
 async function fetchIndexData(sym, tf) {
   const { range, interval } = TF_MAP[tf];
   try {
-    const r = await fetch(yfUrl(`/v8/finance/chart/${encodeURIComponent(sym)}?range=${range}&interval=${interval}&includePrePost=false`));
+    const r = await fetch(`${backendUrl()}/api/yahoo/${encodeURIComponent(sym)}?range=${range}&interval=${interval}`);
     if (!r.ok) return null;
     const d = await r.json();
     const res = d?.chart?.result?.[0];
@@ -1608,7 +1676,7 @@ async function fetchAlpacaTickerNews(sym, limit = 5) {
   const ak = getSetting('alp-key'), as = getSetting('alp-sec');
   if (!ak || !as) return [];
   try {
-    const r = await fetch(`https://data.alpaca.markets/v1beta1/news?symbols=${encodeURIComponent(sym)}&limit=${limit}&sort=desc`, {
+    const r = await fetch(`${backendUrl()}/api/news/${encodeURIComponent(sym)}?limit=${limit}`, {
       headers: { 'APCA-API-KEY-ID': ak, 'APCA-API-SECRET-KEY': as }
     });
     if (!r.ok) return [];
@@ -1639,9 +1707,13 @@ async function refreshSentiment() {
   list.innerHTML = '<div style="text-align:center;padding:10px;color:var(--txd);font-size:11px">⏳ Caricamento news...</div>';
 
   const results = await Promise.all(syms.map(async sym => {
-    const news = await fetchAlpacaTickerNews(sym, 3);
+    const news = await fetchAlpacaTickerNews(sym, 5);
     return { sym, news };
   }));
+
+  // Cache for AI agent context
+  window._tickerNewsCache = {};
+  results.forEach(r => { if (r.news.length) window._tickerNewsCache[r.sym] = r.news; });
 
   const withData = results.filter(r => r.news.length > 0);
   if (!withData.length) {
@@ -1670,6 +1742,112 @@ function timeAgo(d) {
   if (s < 3600) return Math.floor(s / 60) + ' min fa';
   if (s < 86400) return Math.floor(s / 3600) + ' ore fa';
   return Math.floor(s / 86400) + 'g fa';
+}
+
+// ─────────────────────────────
+// CANDLESTICK CHART (Lightweight Charts)
+// ─────────────────────────────
+let chartInstance = null;
+let chartSeries = null;
+let chartSymbol = '';
+let chartTf = '15min';
+
+const CHART_TF_MAP = {
+  '15min': { range: '5d',  interval: '15m' },
+  '1h':    { range: '1mo', interval: '60m' },
+  '1d':    { range: '6mo', interval: '1d'  }
+};
+
+function openChart(sym, name) {
+  chartSymbol = sym;
+  document.getElementById('chart-title').textContent = sym;
+  document.getElementById('chart-name').textContent = name || sym;
+  document.getElementById('chart-overlay').classList.add('open');
+  loadChartData();
+  loadChartNews(sym);
+}
+
+function closeChart(e) {
+  if (!e || e.target === document.getElementById('chart-overlay') || e.currentTarget?.classList?.contains('sheet-close')) {
+    document.getElementById('chart-overlay').classList.remove('open');
+    if (chartInstance) { chartInstance.remove(); chartInstance = null; }
+  }
+}
+
+function setChartTf(tf, el) {
+  chartTf = tf;
+  document.querySelectorAll('.chart-tf').forEach(t => t.classList.remove('active'));
+  el.classList.add('active');
+  loadChartData();
+}
+
+async function loadChartData() {
+  const container = document.getElementById('chart-container');
+  container.innerHTML = '<div style="text-align:center;padding:40px;color:var(--txd);font-size:11px">⏳ Caricamento grafico...</div>';
+
+  const { range, interval } = CHART_TF_MAP[chartTf];
+  try {
+    const r = await fetch(`${backendUrl()}/api/yahoo/${encodeURIComponent(chartSymbol)}?range=${range}&interval=${interval}`);
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const d = await r.json();
+    const res = d?.chart?.result?.[0];
+    if (!res) throw new Error('No data');
+
+    const ts = res.timestamp || [];
+    const q = res.indicators?.quote?.[0] || {};
+    const candles = [];
+    for (let i = 0; i < ts.length; i++) {
+      if (q.open?.[i] != null && q.close?.[i] != null) {
+        candles.push({
+          time: ts[i],
+          open: q.open[i],
+          high: q.high?.[i] || q.open[i],
+          low: q.low?.[i] || q.open[i],
+          close: q.close[i]
+        });
+      }
+    }
+
+    container.innerHTML = '';
+    if (chartInstance) { chartInstance.remove(); chartInstance = null; }
+
+    chartInstance = LightweightCharts.createChart(container, {
+      width: container.clientWidth,
+      height: 300,
+      layout: { background: { color: '#071209' }, textColor: '#3d7a56' },
+      grid: { vertLines: { color: '#0d3d1a' }, horzLines: { color: '#0d3d1a' } },
+      crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
+      timeScale: { timeVisible: chartTf !== '1d', secondsVisible: false, borderColor: '#0d3d1a' },
+      rightPriceScale: { borderColor: '#0d3d1a' }
+    });
+
+    chartSeries = chartInstance.addCandlestickSeries({
+      upColor: '#00e676', downColor: '#ff1744',
+      borderUpColor: '#00e676', borderDownColor: '#ff1744',
+      wickUpColor: '#00b058', wickDownColor: '#ff1744'
+    });
+    chartSeries.setData(candles);
+    chartInstance.timeScale().fitContent();
+
+    // Responsive
+    const ro = new ResizeObserver(() => {
+      if (chartInstance) chartInstance.applyOptions({ width: container.clientWidth });
+    });
+    ro.observe(container);
+  } catch(e) {
+    container.innerHTML = '<div style="text-align:center;padding:40px;color:var(--r);font-size:11px">Errore caricamento grafico: ' + e.message + '</div>';
+  }
+}
+
+async function loadChartNews(sym) {
+  const div = document.getElementById('chart-news');
+  const news = await fetchAlpacaTickerNews(sym, 5);
+  if (!news.length) { div.innerHTML = ''; return; }
+  div.innerHTML = '<div style="font-size:9px;color:var(--txd);letter-spacing:1px;margin-bottom:4px">ULTIME NEWS</div>' +
+    news.map(n => `<a href="${n.url}" target="_blank" rel="noopener" style="display:block;padding:4px 0;border-bottom:1px solid var(--brd);text-decoration:none;color:inherit">
+      <div style="font-size:10px;color:var(--txb);line-height:1.3">${n.title}</div>
+      <div style="font-size:8px;color:var(--txd)">${n.source} · ${timeAgo(n.date)}</div>
+    </a>`).join('');
 }
 
 // ─────────────────────────────
@@ -1869,32 +2047,14 @@ function getSymParams(sym) {
 let allNews = [];
 let newsFilter = 'all';
 
-// RSS sources via rss2json proxy (free, no key needed)
-const NEWS_SOURCES = [
-  {
-    url: 'https://api.rss2json.com/v1/api.json?rss_url=https%3A%2F%2Fwww.cnbc.com%2Fid%2F100003114%2Fdevice%2Frss%2Frss.html',
-    source: 'CNBC', category: 'market'
-  },
-  {
-    url: 'https://api.rss2json.com/v1/api.json?rss_url=https%3A%2F%2Ffeeds.content.dowjones.io%2Fpublic%2Frss%2Fmw_topstories',
-    source: 'MarketWatch', category: 'market'
-  },
-  {
-    url: 'https://api.rss2json.com/v1/api.json?rss_url=https%3A%2F%2Fwww.investing.com%2Frss%2Fnews.rss',
-    source: 'Investing.com', category: 'market'
-  },
-  {
-    url: 'https://api.rss2json.com/v1/api.json?rss_url=https%3A%2F%2Ffeeds.bbci.co.uk%2Fnews%2Fworld%2Frss.xml',
-    source: 'BBC World', category: 'geo'
-  },
-  {
-    url: 'https://api.rss2json.com/v1/api.json?rss_url=https%3A%2F%2Fwww.ft.com%2Frss%2Fhome',
-    source: 'Financial Times', category: 'market'
-  },
-  {
-    url: 'https://api.rss2json.com/v1/api.json?rss_url=https%3A%2F%2Ffeeds.arstechnica.com%2Farstechnica%2Findex',
-    source: 'Ars Technica', category: 'tech'
-  }
+// RSS feed URLs (resolved via backend proxy at runtime)
+const NEWS_FEEDS = [
+  { feed: 'https://www.cnbc.com/id/100003114/device/rss/rss.html', source: 'CNBC', category: 'market' },
+  { feed: 'https://feeds.content.dowjones.io/public/rss/mw_topstories', source: 'MarketWatch', category: 'market' },
+  { feed: 'https://www.investing.com/rss/news.rss', source: 'Investing.com', category: 'market' },
+  { feed: 'https://feeds.bbci.co.uk/news/world/rss.xml', source: 'BBC World', category: 'geo' },
+  { feed: 'https://www.ft.com/rss/home', source: 'Financial Times', category: 'market' },
+  { feed: 'https://feeds.arstechnica.com/arstechnica/index', source: 'Ars Technica', category: 'tech' }
 ];
 
 // Keyword maps for market impact analysis
@@ -1922,9 +2082,10 @@ async function fetchNews() {
     return fetch(url, { signal: ctrl.signal }).finally(() => clearTimeout(timer));
   };
 
-  const fetches = NEWS_SOURCES.map(async (src) => {
+  const base = backendUrl();
+  const fetches = NEWS_FEEDS.map(async (src) => {
     try {
-      const r = await fetchWithTimeout(src.url);
+      const r = await fetchWithTimeout(`${base}/api/rss?url=${encodeURIComponent(src.feed)}`);
       if (!r.ok) return [];
       const d = await r.json();
       if (!d.items) return [];
@@ -2070,15 +2231,22 @@ function getTimeAgo(date) {
 
 // Get news context for agent prompt
 function getNewsContextForAgent(sym) {
-  if (!allNews.length) return '';
-  const t = sym.toLowerCase();
-  const relevant = allNews.filter(n => {
-    const txt = (n.title + ' ' + (n.description || '')).toLowerCase();
-    return txt.includes(t) || isAlertNews(n);
-  }).slice(0, 4);
-  
-  if (!relevant.length) return '';
-  return '\n\nNOTIZIE RECENTI RILEVANTI:\n' + relevant.map(n => `- ${n.title}`).join('\n');
+  let ctx = '';
+  // General market news
+  if (allNews.length) {
+    const t = sym.toLowerCase();
+    const relevant = allNews.filter(n => {
+      const txt = (n.title + ' ' + (n.description || '')).toLowerCase();
+      return txt.includes(t) || isAlertNews(n);
+    }).slice(0, 4);
+    if (relevant.length) ctx += '\n\nNOTIZIE MERCATO:\n' + relevant.map(n => `- ${n.title}`).join('\n');
+  }
+  // Ticker-specific Alpaca news (cached from last refreshSentiment)
+  if (window._tickerNewsCache?.[sym]) {
+    const tn = window._tickerNewsCache[sym].slice(0, 5);
+    if (tn.length) ctx += '\n\nNOTIZIE SPECIFICHE ' + sym + ':\n' + tn.map(n => `- ${n.title} (${n.source})`).join('\n');
+  }
+  return ctx;
 }
 
 // ─────────────────────────────
