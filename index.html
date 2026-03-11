@@ -1863,16 +1863,31 @@ async function runAgentScan() {
         if (!window._tickerNewsCache) window._tickerNewsCache = {};
         if (tn.length) window._tickerNewsCache[s.sym] = tn;
       }
-      const res = await fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        headers: { 'Content-Type':'application/json', 'x-api-key':aiKey, 'anthropic-version':'2023-06-01', 'anthropic-dangerous-direct-browser-access':'true' },
-        body: JSON.stringify({
-          model: 'claude-haiku-4-5-20251001',
-          max_tokens: 600,
-          messages: [{ role: 'user', content: buildAgentPrompt(s) }]
-        })
-      });
-      if (!res.ok) { alog('Errore API su ' + s.sym, 'err'); continue; }
+      // Delay tra chiamate per evitare rate limiting (500ms)
+      await new Promise(r => setTimeout(r, 500));
+      let res, retries = 0;
+      while (retries < 2) {
+        res = await fetch('https://api.anthropic.com/v1/messages', {
+          method: 'POST',
+          headers: { 'Content-Type':'application/json', 'x-api-key':aiKey, 'anthropic-version':'2023-06-01', 'anthropic-dangerous-direct-browser-access':'true' },
+          body: JSON.stringify({
+            model: 'claude-haiku-4-5-20251001',
+            max_tokens: 600,
+            messages: [{ role: 'user', content: buildAgentPrompt(s) }]
+          })
+        });
+        if (res.ok) break;
+        if (res.status === 429) {
+          retries++;
+          alog(s.sym + ': rate limit, attendo 5s... (tentativo ' + retries + '/2)', 'info');
+          await new Promise(r => setTimeout(r, 5000));
+        } else {
+          const errBody = await res.text().catch(() => '');
+          alog('Errore API ' + res.status + ' su ' + s.sym + ': ' + errBody.substring(0, 100), 'err');
+          break;
+        }
+      }
+      if (!res || !res.ok) continue;
       const data = await res.json();
       trackCost('claude-haiku-4-5-20251001', data.usage, 'scan');
       const txt = data.content?.[0]?.text || '';
