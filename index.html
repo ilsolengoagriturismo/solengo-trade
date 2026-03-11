@@ -375,7 +375,7 @@ canvas#eqCanvas{width:100%;height:120px}
       <div class="metric"><div class="metric-l">EQUITY</div><div class="metric-v" id="m-equity">$100,000</div></div>
       <div class="metric"><div class="metric-l">P&L</div><div class="metric-v" id="m-pnl">$0.00</div></div>
       <div class="metric"><div class="metric-l">POSIZIONI</div><div class="metric-v" id="m-pos">0</div></div>
-      <div class="metric"><div class="metric-l">WIN RATE</div><div class="metric-v" id="m-wr">—</div></div>
+      <div class="metric"><div class="metric-l">COSTO AI</div><div class="metric-v" id="m-cost" style="font-size:11px">—</div></div>
     </div>
   </div>
 
@@ -591,10 +591,34 @@ canvas#eqCanvas{width:100%;height:120px}
           <button class="btn-save" onclick="saveKeys()">💾 SALVA CHIAVI</button>
         </div>
         <div class="settings-section">
+          <div class="ss-title">💰 COSTI API</div>
+          <div style="font-size:10px;color:var(--txd);margin-bottom:10px;line-height:1.6">Monitoraggio in tempo reale dei costi delle chiamate AI. Modello: <span style="color:var(--g)">Claude Haiku 4.5</span></div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px">
+            <div style="background:var(--bg3);padding:10px;border-radius:8px;border:1px solid var(--brd)">
+              <div style="font-size:9px;color:var(--txd);letter-spacing:1px">OGGI</div>
+              <div style="font-size:16px;font-weight:700;color:var(--g)" id="cost-today">$0.0000</div>
+            </div>
+            <div style="background:var(--bg3);padding:10px;border-radius:8px;border:1px solid var(--brd)">
+              <div style="font-size:9px;color:var(--txd);letter-spacing:1px">TOTALE</div>
+              <div style="font-size:16px;font-weight:700;color:var(--y)" id="cost-total">$0.0000</div>
+            </div>
+          </div>
+          <div style="font-size:10px;color:var(--txd);line-height:2" id="cost-breakdown">
+            <div>📡 Chiamate API: <span id="cost-calls" style="color:var(--txb)">0 oggi / 0 totali</span></div>
+            <div>🔍 Scansioni agente: <span id="cost-scan" style="color:var(--txb)">$0.0000</span></div>
+            <div>🧭 Discovery: <span id="cost-disc" style="color:var(--txb)">$0.0000</span></div>
+            <div>🌐 Traduzioni: <span id="cost-trans" style="color:var(--txb)">$0.0000</span></div>
+            <div>📊 Allocazione AI: <span id="cost-alloc" style="color:var(--txb)">$0.0000</span></div>
+          </div>
+          <div style="display:flex;gap:8px;margin-top:10px">
+            <button class="btn-save" onclick="resetCostData()" style="background:rgba(255,23,68,.1);border-color:rgba(255,23,68,.3);color:var(--r);flex:1">🗑 AZZERA CONTATORE</button>
+          </div>
+        </div>
+        <div class="settings-section">
           <div class="ss-title">INFO</div>
           <div style="font-size:11px;color:var(--txd);line-height:1.8">
             <div>✦ Paper trading — nessun denaro reale</div>
-            <div>✦ Analisi AI: Anthropic Claude</div>
+            <div>✦ Analisi AI: Anthropic Claude Haiku 4.5</div>
             <div>✦ Broker: Alpaca Markets (paper)</div>
             <div>✦ Mercati USA: NYSE e NASDAQ</div>
             <div style="margin-top:8px;color:rgba(255,214,0,.6)">⚠ I segnali AI sono educativi e non costituiscono consulenza finanziaria.</div>
@@ -995,6 +1019,74 @@ let agentMemory = [];
 let discoveryActive = false; // loaded from Supabase
 
 // ─────────────────────────────
+// COST TRACKER — monitoraggio costi API
+// ─────────────────────────────
+const COST_RATES = {
+  'claude-haiku-4-5-20251001': { input: 0.80 / 1e6, output: 4.00 / 1e6 },
+  'claude-sonnet-4-20250514':  { input: 3.00 / 1e6, output: 15.00 / 1e6 }
+};
+let costData = JSON.parse(localStorage.getItem('st_cost_data') || '{"total":0,"today":0,"todayDate":"","calls":0,"callsToday":0,"byType":{"scan":0,"discovery":0,"translate":0,"alloc":0},"history":[]}');
+
+function trackCost(model, usage, type) {
+  const rates = COST_RATES[model] || COST_RATES['claude-haiku-4-5-20251001'];
+  const inputTokens = usage?.input_tokens || 0;
+  const outputTokens = usage?.output_tokens || 0;
+  const cost = (inputTokens * rates.input) + (outputTokens * rates.output);
+
+  const today = new Date().toISOString().slice(0, 10);
+  if (costData.todayDate !== today) {
+    // Save yesterday to history
+    if (costData.todayDate && costData.today > 0) {
+      costData.history.push({ date: costData.todayDate, cost: costData.today, calls: costData.callsToday });
+      if (costData.history.length > 30) costData.history.shift(); // keep last 30 days
+    }
+    costData.today = 0;
+    costData.callsToday = 0;
+    costData.todayDate = today;
+  }
+
+  costData.total += cost;
+  costData.today += cost;
+  costData.calls++;
+  costData.callsToday++;
+  if (type && costData.byType[type] !== undefined) costData.byType[type] += cost;
+
+  localStorage.setItem('st_cost_data', JSON.stringify(costData));
+  updateCostDisplay();
+  return cost;
+}
+
+function updateCostDisplay() {
+  const el = document.getElementById('m-cost');
+  if (el) {
+    const todayCent = (costData.today * 100).toFixed(1);
+    el.textContent = costData.today < 0.01 ? '<1¢' : costData.today < 1 ? todayCent + '¢' : '$' + costData.today.toFixed(2);
+    el.className = 'metric-v' + (costData.today > 1 ? ' dn' : '');
+  }
+  const elTotal = document.getElementById('cost-total');
+  if (elTotal) elTotal.textContent = '$' + costData.total.toFixed(4);
+  const elToday = document.getElementById('cost-today');
+  if (elToday) elToday.textContent = '$' + costData.today.toFixed(4);
+  const elCalls = document.getElementById('cost-calls');
+  if (elCalls) elCalls.textContent = costData.callsToday + ' oggi / ' + costData.calls + ' totali';
+  const elScan = document.getElementById('cost-scan');
+  if (elScan) elScan.textContent = '$' + (costData.byType.scan || 0).toFixed(4);
+  const elDisc = document.getElementById('cost-disc');
+  if (elDisc) elDisc.textContent = '$' + (costData.byType.discovery || 0).toFixed(4);
+  const elTrans = document.getElementById('cost-trans');
+  if (elTrans) elTrans.textContent = '$' + (costData.byType.translate || 0).toFixed(4);
+  const elAlloc = document.getElementById('cost-alloc');
+  if (elAlloc) elAlloc.textContent = '$' + (costData.byType.alloc || 0).toFixed(4);
+}
+
+function resetCostData() {
+  costData = { total: 0, today: 0, todayDate: '', calls: 0, callsToday: 0, byType: { scan: 0, discovery: 0, translate: 0, alloc: 0 }, history: [] };
+  localStorage.setItem('st_cost_data', JSON.stringify(costData));
+  updateCostDisplay();
+  toast('Contatore costi azzerato');
+}
+
+// ─────────────────────────────
 // SUPABASE PERSISTENCE LAYER
 // ─────────────────────────────
 let sb = null; // Supabase client instance
@@ -1214,6 +1306,7 @@ window.addEventListener('load', async () => {
     updateTopbar();
   }
   alog('Sistema avviato', 'info');
+  updateCostDisplay(); // show saved cost data
   fetchNews();
   setTimeout(loadAllIndices, 2000);
   setTimeout(refreshSentiment, 3000);
@@ -1580,10 +1673,11 @@ TICKER: SIMBOLO | NOME_AZIENDA | MOTIVO_BREVE
     const res = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-api-key': aiKey, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
-      body: JSON.stringify({ model: 'claude-sonnet-4-20250514', max_tokens: 400, messages: [{ role: 'user', content: prompt }] })
+      body: JSON.stringify({ model: 'claude-haiku-4-5-20251001', max_tokens: 400, messages: [{ role: 'user', content: prompt }] })
     });
     if (!res.ok) { alog('🔍 Errore API discovery', 'err'); return []; }
     const data = await res.json();
+    trackCost('claude-haiku-4-5-20251001', data.usage, 'discovery');
     const txt = data.content?.[0]?.text || '';
 
     if (txt.includes('NESSUNO') || !txt.includes('TICKER:')) {
@@ -1681,13 +1775,14 @@ async function runAgentScan() {
         method: 'POST',
         headers: { 'Content-Type':'application/json', 'x-api-key':aiKey, 'anthropic-version':'2023-06-01', 'anthropic-dangerous-direct-browser-access':'true' },
         body: JSON.stringify({
-          model: 'claude-sonnet-4-20250514',
+          model: 'claude-haiku-4-5-20251001',
           max_tokens: 600,
           messages: [{ role: 'user', content: buildAgentPrompt(s) }]
         })
       });
       if (!res.ok) { alog('Errore API su ' + s.sym, 'err'); continue; }
       const data = await res.json();
+      trackCost('claude-haiku-4-5-20251001', data.usage, 'scan');
       const txt = data.content?.[0]?.text || '';
       const signal = parseSignal(txt);
       s.signal = signal.action;
@@ -1949,9 +2044,6 @@ function updateTopbar() {
   pe.textContent = (pnl >= 0 ? '+' : '') + '$' + pnl.toFixed(0);
   pe.className = 'metric-v ' + (pnl >= 0 ? 'up' : 'dn');
   document.getElementById('m-pos').textContent = positions.length;
-  const wins = closed.filter(t => t.pnl > 0).length;
-  const wr = closed.length > 0 ? Math.round(wins / closed.length * 100) + '%' : '—';
-  document.getElementById('m-wr').textContent = wr;
 }
 
 function updateStats() {
@@ -2665,9 +2757,10 @@ ATTENZIONE: [un rischio specifico da monitorare]`;
     const res = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: { 'Content-Type':'application/json', 'x-api-key':aiKey, 'anthropic-version':'2023-06-01', 'anthropic-dangerous-direct-browser-access':'true' },
-      body: JSON.stringify({ model:'claude-sonnet-4-20250514', max_tokens:400, messages:[{ role:'user', content:prompt }] })
+      body: JSON.stringify({ model:'claude-haiku-4-5-20251001', max_tokens:400, messages:[{ role:'user', content:prompt }] })
     });
     const data = await res.json();
+    trackCost('claude-haiku-4-5-20251001', data.usage, 'alloc');
     const txt = data.content?.[0]?.text || '';
 
     const innov = parseInt(txt.match(/INNOVAZIONE:\s*(\d+)/i)?.[1]) || null;
@@ -2855,6 +2948,7 @@ async function translateNewsBatch(items) {
       });
       if (!res.ok) continue;
       const data = await res.json();
+      trackCost('claude-haiku-4-5-20251001', data.usage, 'translate');
       const txt = data.content?.[0]?.text || '';
       const lines = txt.split('\n').filter(l => /^\d+\./.test(l.trim()));
       lines.forEach(line => {
