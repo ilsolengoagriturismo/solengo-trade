@@ -552,19 +552,14 @@ canvas#eqCanvas{width:100%;height:120px}
           <button class="btn-alloc-ai" id="btn-alloc-ai" onclick="runAllocAI()">⚡ ANALIZZA E SUGGERISCI ALLOCAZIONE</button>
         </div>
 
-        <!-- SENTIMENT BOX -->
+        <!-- TICKER NEWS (Alpaca) -->
         <div class="sent-box">
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
-            <div class="alloc-title" style="margin:0">📣 SENTIMENT MERCATO</div>
+            <div class="alloc-title" style="margin:0">📰 NEWS TICKER (Alpaca)</div>
             <button onclick="refreshSentiment()" style="background:var(--gdk);color:var(--g);border:1px solid var(--gd);padding:5px 10px;font-family:'JetBrains Mono',monospace;font-size:9px;cursor:pointer;border-radius:6px">⟳</button>
           </div>
-          <div class="sentiment-src-row">
-            <span class="src-toggle active" id="src-stocktwits" onclick="setSentSrc('stocktwits',this)">📊 Stocktwits</span>
-            <span class="src-toggle soon" title="Coming soon">Reddit WSB<span class="src-badge-soon">PRESTO</span></span>
-            <span class="src-toggle soon" title="Coming soon">StockTitan<span class="src-badge-soon">PRESTO</span></span>
-            <span class="src-toggle soon" title="Coming soon">Apify<span class="src-badge-soon">API</span></span>
-          </div>
-          <div id="sentiment-list"><div style="text-align:center;padding:20px;color:var(--txd);font-size:11px">Caricamento sentiment...</div></div>
+          <div style="font-size:9px;color:var(--txd);margin-bottom:10px;letter-spacing:.5px">Ultime notizie per i ticker in watchlist · Fonte: Alpaca Markets News API</div>
+          <div id="sentiment-list"><div style="text-align:center;padding:20px;color:var(--txd);font-size:11px">Caricamento news ticker...</div></div>
         </div>
 
         <!-- INDEX SCANNER -->
@@ -991,6 +986,12 @@ function removeSym(sym, e) {
   sbDeleteWatchItem(sym);
 }
 
+const CORS_PROXY = 'https://api.allorigins.win/raw?url=';
+
+function yfUrl(path) {
+  return CORS_PROXY + encodeURIComponent('https://query1.finance.yahoo.com' + path);
+}
+
 async function fetchPrice(s) {
   const ak = getSetting('alp-key'), as = getSetting('alp-sec');
   if (ak && as) {
@@ -1005,7 +1006,7 @@ async function fetchPrice(s) {
     } catch(e) {}
   }
   try {
-    const r = await fetch(`https://query1.finance.yahoo.com/v8/finance/chart/${s.sym}?interval=1d&range=1d`);
+    const r = await fetch(yfUrl(`/v8/finance/chart/${s.sym}?interval=1d&range=1d`));
     if (r.ok) {
       const d = await r.json();
       const p = d?.chart?.result?.[0]?.meta?.regularMarketPrice;
@@ -1471,8 +1472,7 @@ const TF_MAP = {
 async function fetchIndexData(sym, tf) {
   const { range, interval } = TF_MAP[tf];
   try {
-    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(sym)}?range=${range}&interval=${interval}&includePrePost=false`;
-    const r = await fetch(url);
+    const r = await fetch(yfUrl(`/v8/finance/chart/${encodeURIComponent(sym)}?range=${range}&interval=${interval}&includePrePost=false`));
     if (!r.ok) return null;
     const d = await r.json();
     const res = d?.chart?.result?.[0];
@@ -1601,65 +1601,75 @@ function addIdxToWatchlist(sym, name) {
 }
 
 // ─────────────────────────────
-// SENTIMENT (Stocktwits)
+// TICKER NEWS (Alpaca News API)
 // ─────────────────────────────
-let sentSrc = 'stocktwits';
 
-function setSentSrc(src, el) {
-  sentSrc = src;
-  document.querySelectorAll('.src-toggle:not(.soon)').forEach(t => t.classList.remove('active'));
-  el.classList.add('active');
-  refreshSentiment();
-}
-
-async function fetchStocktwitsSentiment(sym) {
+async function fetchAlpacaTickerNews(sym, limit = 5) {
+  const ak = getSetting('alp-key'), as = getSetting('alp-sec');
+  if (!ak || !as) return [];
   try {
-    const r = await fetch(`https://api.stocktwits.com/api/2/streams/symbol/${sym}.json`);
-    if (!r.ok) return null;
-    const d = await r.json();
-    const messages = d.messages || [];
-    let bull = 0, bear = 0;
-    messages.forEach(m => {
-      if (m.entities?.sentiment?.basic === 'Bullish') bull++;
-      else if (m.entities?.sentiment?.basic === 'Bearish') bear++;
+    const r = await fetch(`https://data.alpaca.markets/v1beta1/news?symbols=${encodeURIComponent(sym)}&limit=${limit}&sort=desc`, {
+      headers: { 'APCA-API-KEY-ID': ak, 'APCA-API-SECRET-KEY': as }
     });
-    const total = bull + bear;
-    return total > 0 ? { bull, bear, total, pct: Math.round(bull / total * 100) } : null;
-  } catch(e) { return null; }
+    if (!r.ok) return [];
+    const d = await r.json();
+    return (d.news || []).map(n => ({
+      title: n.headline,
+      url: n.url,
+      source: n.source,
+      date: n.created_at ? new Date(n.created_at) : new Date(),
+      summary: n.summary?.substring(0, 120) || '',
+      symbols: n.symbols || []
+    }));
+  } catch(e) { return []; }
 }
 
 async function refreshSentiment() {
-  const syms = watchlist.slice(0, 8).map(s => s.sym);
+  const ak = getSetting('alp-key'), as = getSetting('alp-sec');
   const list = document.getElementById('sentiment-list');
-  list.innerHTML = '<div style="text-align:center;padding:10px;color:var(--txd);font-size:11px">⏳ Caricamento...</div>';
+  if (!ak || !as) {
+    list.innerHTML = '<div style="text-align:center;padding:10px;color:var(--txd);font-size:11px">Configura le chiavi Alpaca nelle Impostazioni per vedere le news ticker</div>';
+    return;
+  }
+  const syms = watchlist.slice(0, 8).map(s => s.sym);
+  if (!syms.length) {
+    list.innerHTML = '<div style="text-align:center;padding:10px;color:var(--txd);font-size:11px">Aggiungi ticker alla watchlist per vedere le news</div>';
+    return;
+  }
+  list.innerHTML = '<div style="text-align:center;padding:10px;color:var(--txd);font-size:11px">⏳ Caricamento news...</div>';
 
   const results = await Promise.all(syms.map(async sym => {
-    const d = await fetchStocktwitsSentiment(sym);
-    return { sym, data: d };
+    const news = await fetchAlpacaTickerNews(sym, 3);
+    return { sym, news };
   }));
 
-  const withData = results.filter(r => r.data);
+  const withData = results.filter(r => r.news.length > 0);
   if (!withData.length) {
-    list.innerHTML = '<div style="text-align:center;padding:10px;color:var(--txd);font-size:11px">Dati sentiment non disponibili al momento</div>';
+    list.innerHTML = '<div style="text-align:center;padding:10px;color:var(--txd);font-size:11px">Nessuna news disponibile per i ticker in watchlist</div>';
     return;
   }
 
-  list.innerHTML = `
-    <div style="display:flex;justify-content:space-between;font-size:9px;color:var(--txd);letter-spacing:1px;margin-bottom:6px;padding:0 2px">
-      <span>SIMBOLO</span><span style="flex:1;margin-left:52px">BULLISH ←→ BEARISH</span><span>%BULL</span><span style="width:40px;text-align:right">MSG</span>
-    </div>` +
-    withData.sort((a,b) => b.data.pct - a.data.pct).map(r => {
-      const pct = r.data.pct;
-      const cls = pct >= 60 ? 'up' : pct <= 40 ? 'dn' : 'flat';
-      return `<div class="sent-row">
-        <div class="sent-sym">${r.sym}</div>
-        <div class="sent-bar-wrap">
-          <div class="sent-bull-fill" style="width:${pct}%"></div>
-        </div>
-        <div class="sent-pct idx-chg ${cls}">${pct}%</div>
-        <div class="sent-vol">${r.data.total}</div>
-      </div>`;
+  list.innerHTML = withData.map(r => {
+    const newsHtml = r.news.map(n => {
+      const ago = timeAgo(n.date);
+      return `<a href="${n.url}" target="_blank" rel="noopener" style="display:block;padding:6px 0;border-bottom:1px solid var(--brd);text-decoration:none;color:inherit">
+        <div style="font-size:11px;color:var(--txb);line-height:1.4;margin-bottom:2px">${n.title}</div>
+        <div style="font-size:9px;color:var(--txd)">${n.source} · ${ago}</div>
+      </a>`;
     }).join('');
+    return `<div style="margin-bottom:12px">
+      <div style="font-family:'Orbitron',sans-serif;font-size:13px;font-weight:900;color:var(--g);margin-bottom:6px">${r.sym}</div>
+      ${newsHtml}
+    </div>`;
+  }).join('');
+}
+
+function timeAgo(d) {
+  const s = Math.floor((Date.now() - d.getTime()) / 1000);
+  if (s < 60) return 'ora';
+  if (s < 3600) return Math.floor(s / 60) + ' min fa';
+  if (s < 86400) return Math.floor(s / 3600) + ' ore fa';
+  return Math.floor(s / 86400) + 'g fa';
 }
 
 // ─────────────────────────────
