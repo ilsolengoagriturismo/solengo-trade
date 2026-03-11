@@ -438,6 +438,16 @@ canvas#eqCanvas{width:100%;height:120px}
               <option value="auto">AUTOMATICO — agente opera in autonomia</option>
             </select>
           </div>
+          <div style="display:flex;align-items:center;justify-content:space-between;background:var(--bg3);border:1px solid var(--brd);border-radius:8px;padding:10px 12px;margin-bottom:10px">
+            <div>
+              <div style="font-size:11px;font-weight:700;color:var(--y);letter-spacing:1px">⚡ AUTOPILOTA</div>
+              <div style="font-size:9px;color:var(--txd);margin-top:2px" id="autopilot-status">Inattivo</div>
+            </div>
+            <label class="toggle">
+              <input type="checkbox" id="autopilot-toggle" onchange="toggleAutopilot()">
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
           <button class="btn-scan" id="btn-scan" onclick="runAgentScan()">⚡ SCANSIONA WATCHLIST ORA</button>
         </div>
 
@@ -480,6 +490,34 @@ canvas#eqCanvas{width:100%;height:120px}
         <div class="equity-box">
           <div class="equity-title">CURVA EQUITY</div>
           <canvas id="eqCanvas"></canvas>
+        </div>
+
+        <!-- AGENT PERFORMANCE DASHBOARD -->
+        <div style="margin-top:16px">
+          <div class="section-title">🤖 PERFORMANCE AGENTE</div>
+          <div class="stats-grid" style="margin-bottom:12px">
+            <div class="stat-box"><div class="stat-v" id="ap-wr">—</div><div class="stat-l">Win Rate Agente</div></div>
+            <div class="stat-box"><div class="stat-v" id="ap-trades">0</div><div class="stat-l">Trade Agente</div></div>
+            <div class="stat-box"><div class="stat-v" id="ap-pnl">$0</div><div class="stat-l">P&L Agente</div></div>
+            <div class="stat-box"><div class="stat-v" id="ap-avg-conf">—</div><div class="stat-l">Conf. Media</div></div>
+          </div>
+
+          <div style="font-size:10px;color:var(--txd);letter-spacing:1px;margin-bottom:6px">WIN RATE PER SIMBOLO</div>
+          <div id="ap-per-symbol" style="margin-bottom:12px;font-size:11px;color:var(--txd)">Nessun dato</div>
+
+          <div style="font-size:10px;color:var(--txd);letter-spacing:1px;margin-bottom:6px">AFFIDABILITÀ FONTI</div>
+          <div id="ap-sources" style="margin-bottom:12px;font-size:11px;color:var(--txd)">Nessun dato</div>
+
+          <div style="font-size:10px;color:var(--txd);letter-spacing:1px;margin-bottom:6px">PATTERN VINCENTI</div>
+          <div id="ap-patterns" style="margin-bottom:12px;font-size:11px;color:var(--txd)">Nessun dato</div>
+
+          <div class="equity-box">
+            <div class="equity-title">EQUITY CURVE AGENTE</div>
+            <canvas id="eqAgentCanvas"></canvas>
+          </div>
+
+          <div style="font-size:10px;color:var(--txd);letter-spacing:1px;margin:12px 0 6px">ULTIMI 10 TRADE AGENTE</div>
+          <div id="ap-recent" style="font-size:11px;color:var(--txd)">Nessun trade</div>
         </div>
       </div>
     </div>
@@ -777,6 +815,10 @@ let agentActive = false;
 let agentTimer = null;
 let pendingSignals = [];
 let activeSheetSym = null;
+let autopilotActive = false;
+let autopilotTimer = null;
+let slTpMonitorTimer = null;
+let agentMemory = []; // loaded from Supabase
 
 // ─────────────────────────────
 // SUPABASE PERSISTENCE LAYER
@@ -836,7 +878,8 @@ async function sbLoadAll() {
       equityHist = eq.map(r => parseFloat(r.equity));
     }
     updateTopbar(); renderMarket(); renderPositions(); initSymParams();
-    sbStatusOk('Dati caricati: ' + watchlist.length + ' titoli, ' + positions.length + ' posizioni, ' + closed.length + ' trade chiusi');
+    await sbLoadAgentMemory();
+    sbStatusOk('Dati caricati: ' + watchlist.length + ' titoli, ' + positions.length + ' posizioni, ' + closed.length + ' trade chiusi, ' + agentMemory.length + ' memorie agente');
   } catch(e) {
     sbStatusErr('Errore caricamento: ' + e.message);
   }
@@ -890,6 +933,54 @@ async function sbInsertClosedTrade(trade) {
 async function sbInsertEquity(value) {
   if (!sb) return;
   await sb.from('trading_equity_history').insert({ equity: value });
+}
+
+// ── Agent Memory (agent_memory table) ──
+async function sbCreateAgentMemoryTable() {
+  if (!sb) return;
+  // Auto-create table if it doesn't exist (idempotent via RPC or just try insert)
+  // Table: agent_memory with columns defined in the design
+}
+
+async function sbInsertMemory(mem) {
+  if (!sb) return null;
+  try {
+    const { data, error } = await sb.from('agent_memory').insert({
+      symbol: mem.symbol,
+      signal: mem.signal,
+      confidence: mem.confidence,
+      sources_used: mem.sources_used,
+      entry_price: mem.entry_price,
+      exit_price: mem.exit_price,
+      pnl_pct: mem.pnl_pct,
+      outcome: mem.outcome || 'OPEN',
+      news_titles: mem.news_titles,
+      geo_alert: mem.geo_alert,
+      created_at: new Date().toISOString()
+    }).select('id').single();
+    if (data) return data.id;
+  } catch(e) { console.warn('agent_memory insert error:', e); }
+  return null;
+}
+
+async function sbUpdateMemoryOutcome(memId, exitPrice, pnlPct, outcome) {
+  if (!sb || !memId) return;
+  try {
+    await sb.from('agent_memory').update({
+      exit_price: exitPrice,
+      pnl_pct: pnlPct,
+      outcome: outcome,
+      closed_at: new Date().toISOString()
+    }).eq('id', memId);
+  } catch(e) { console.warn('agent_memory update error:', e); }
+}
+
+async function sbLoadAgentMemory() {
+  if (!sb) return;
+  try {
+    const { data } = await sb.from('agent_memory').select('*').order('created_at', { ascending: false }).limit(100);
+    if (data) agentMemory = data;
+  } catch(e) { agentMemory = []; }
 }
 
 // ── Status display ──
@@ -1186,6 +1277,14 @@ function closePos(id) {
   sbDeletePosition(p._dbId);
   sbInsertClosedTrade(trade);
   sbInsertEquity(eq);
+  // Update agent memory if this position has a memory ID
+  if (p._memoryId) {
+    const outcome = pnl >= 0 ? 'WIN' : 'LOSS';
+    sbUpdateMemoryOutcome(p._memoryId, p.current, pct, outcome);
+    // Update local cache too
+    const mem = agentMemory.find(m => m.id === p._memoryId);
+    if (mem) { mem.outcome = outcome; mem.exit_price = p.current; mem.pnl_pct = pct; mem.closed_at = new Date().toISOString(); }
+  }
 }
 
 function killAll() {
@@ -1193,7 +1292,7 @@ function killAll() {
 }
 
 // ─────────────────────────────
-// AI AGENT
+// AI AGENT + AUTOPILOT
 // ─────────────────────────────
 function toggleAgent() {
   agentActive = document.getElementById('agent-toggle').checked;
@@ -1208,6 +1307,55 @@ function toggleAgent() {
     clearInterval(agentTimer);
     alog('Agente disattivato', 'info');
   }
+}
+
+function toggleAutopilot() {
+  autopilotActive = document.getElementById('autopilot-toggle').checked;
+  document.getElementById('autopilot-status').textContent = autopilotActive
+    ? 'Attivo — scansione 30min, monitor SL/TP 5min'
+    : 'Inattivo';
+  if (autopilotActive) {
+    // Force auto mode + agent on
+    document.getElementById('agent-mode').value = 'auto';
+    if (!agentActive) { document.getElementById('agent-toggle').checked = true; toggleAgent(); }
+    // Start SL/TP monitor every 5 minutes
+    slTpMonitorTimer = setInterval(monitorSLTP, 5 * 60 * 1000);
+    alog('⚡ AUTOPILOTA ATTIVATO — monitor SL/TP ogni 5 min', 'ok');
+    monitorSLTP(); // run immediately
+  } else {
+    clearInterval(slTpMonitorTimer);
+    alog('⚡ Autopilota disattivato', 'info');
+  }
+}
+
+async function monitorSLTP() {
+  if (!positions.length) return;
+  alog('Monitor SL/TP: controllo ' + positions.length + ' posizioni...', 'info');
+  // Refresh prices first
+  for (const p of positions) {
+    const s = watchlist.find(x => x.sym === p.sym);
+    if (s) { p.current = s.price; }
+  }
+  // Check SL/TP hits
+  const toClose = [];
+  for (const p of positions) {
+    if (p.sl && p.current <= p.sl && p.side === 'buy') {
+      alog('🔴 SL HIT: ' + p.sym + ' @ $' + p.current.toFixed(2) + ' (SL: $' + p.sl.toFixed(2) + ')', 'err');
+      toClose.push(p);
+    } else if (p.tp && p.current >= p.tp && p.side === 'buy') {
+      alog('🟢 TP HIT: ' + p.sym + ' @ $' + p.current.toFixed(2) + ' (TP: $' + p.tp.toFixed(2) + ')', 'ok');
+      toClose.push(p);
+    } else if (p.sl && p.current >= p.sl && p.side === 'sell') {
+      alog('🔴 SL HIT (SHORT): ' + p.sym + ' @ $' + p.current.toFixed(2), 'err');
+      toClose.push(p);
+    } else if (p.tp && p.current <= p.tp && p.side === 'sell') {
+      alog('🟢 TP HIT (SHORT): ' + p.sym + ' @ $' + p.current.toFixed(2), 'ok');
+      toClose.push(p);
+    }
+  }
+  for (const p of toClose) { closePos(p.id); }
+  if (toClose.length) alog('Autopilota: chiuse ' + toClose.length + ' posizioni', 'trade');
+  renderPositions();
 }
 
 async function runAgentScan() {
@@ -1235,7 +1383,7 @@ async function runAgentScan() {
         headers: { 'Content-Type':'application/json', 'x-api-key':aiKey, 'anthropic-version':'2023-06-01', 'anthropic-dangerous-direct-browser-access':'true' },
         body: JSON.stringify({
           model: 'claude-sonnet-4-20250514',
-          max_tokens: 400,
+          max_tokens: 600,
           messages: [{ role: 'user', content: buildAgentPrompt(s) }]
         })
       });
@@ -1244,8 +1392,28 @@ async function runAgentScan() {
       const txt = data.content?.[0]?.text || '';
       const signal = parseSignal(txt);
       s.signal = signal.action;
-      pendingSignals.push({ sym: s.sym, name: s.name, price: s.price, signal, rawText: txt });
-      alog(s.sym + ': segnale ' + signal.action + ' — ' + signal.reason, signal.action === 'BUY' ? 'trade' : signal.action === 'SELL' ? 'err' : 'info');
+
+      // Determine sources used and geo alert status
+      const sourcesUsed = [];
+      if (window._tickerNewsCache?.[s.sym]?.length) sourcesUsed.push('alpaca_news');
+      if (allNews.some(n => (n.title + ' ' + (n.description||'')).toLowerCase().includes(s.sym.toLowerCase()))) sourcesUsed.push('rss_general');
+      const geoAlert = allNews.some(n => isAlertNews(n));
+      if (geoAlert) sourcesUsed.push('geo_alert');
+      const newsTitles = (window._tickerNewsCache?.[s.sym] || []).slice(0, 5).map(n => n.title);
+
+      pendingSignals.push({ sym: s.sym, name: s.name, price: s.price, signal, rawText: txt, sourcesUsed, geoAlert, newsTitles });
+
+      // Save to agent_memory
+      const memId = await sbInsertMemory({
+        symbol: s.sym, signal: signal.action, confidence: signal.conf,
+        sources_used: sourcesUsed, entry_price: s.price,
+        exit_price: null, pnl_pct: null, outcome: signal.action === 'WAIT' ? 'WAIT' : 'OPEN',
+        news_titles: newsTitles, geo_alert: geoAlert
+      });
+      // Attach memory ID to signal for linking to position later
+      pendingSignals[pendingSignals.length - 1]._memoryId = memId;
+
+      alog(s.sym + ': segnale ' + signal.action + ' — ' + signal.reason + ' [conf:' + signal.conf + '/10]', signal.action === 'BUY' ? 'trade' : signal.action === 'SELL' ? 'err' : 'info');
       sbUpsertWatchItem(s);
     } catch(e) {
       alog('Errore ' + s.sym + ': ' + e.message, 'err');
@@ -1255,13 +1423,21 @@ async function runAgentScan() {
   renderMarket();
   renderSignals();
 
-  // Auto mode: execute automatically
-  if (document.getElementById('agent-mode').value === 'auto') {
-    pendingSignals.forEach(sig => {
+  // Auto/Autopilot mode: execute BUY and SELL automatically
+  const isAuto = document.getElementById('agent-mode').value === 'auto' || autopilotActive;
+  if (isAuto) {
+    for (const sig of pendingSignals) {
       if (sig.signal.action === 'BUY' && positions.length < parseInt(document.getElementById('max-pos').value)) {
         executeAgentTrade(sig, 'buy');
+      } else if (sig.signal.action === 'SELL' && autopilotActive) {
+        // In autopilot, also close existing long positions on SELL signal
+        const existingPos = positions.find(p => p.sym === sig.sym && p.side === 'buy');
+        if (existingPos) {
+          alog('AUTOPILOTA: chiusura LONG ' + sig.sym + ' su segnale SELL', 'trade');
+          closePos(existingPos.id);
+        }
       }
-    });
+    }
   }
 
   const cnt = pendingSignals.filter(s => s.signal.action !== 'WAIT').length;
@@ -1270,6 +1446,9 @@ async function runAgentScan() {
   document.getElementById('signals-count').textContent = pendingSignals.length;
   btn.disabled = false; btn.textContent = '⚡ SCANSIONA WATCHLIST ORA';
   toast('Scansione completata — ' + cnt + ' segnali attivi');
+
+  // Reload memory for stats
+  await sbLoadAgentMemory();
 }
 
 function buildAgentPrompt(s) {
@@ -1277,18 +1456,86 @@ function buildAgentPrompt(s) {
   const riskPct = sp.risk;
   const slPct = sp.sl;
   const tpPct = sp.tp;
-  return `Analizza il titolo ${s.sym} (${s.name}) quotato a $${s.price.toFixed(2)} e fornisci un segnale operativo.
 
-Parametri operativi del trader:
+  let prompt = `Sei un trader professionista con 20 anni di esperienza sui mercati USA. Analizzi ogni decisione basandoti sui tuoi dati storici e sulla tua esperienza passata.
+
+TITOLO: ${s.sym} (${s.name}) — Prezzo attuale: $${s.price.toFixed(2)}
+
+PARAMETRI OPERATIVI:
 - Rischio per trade: ${riskPct}% del capitale
-- Stop Loss target: ${slPct}% sotto il prezzo di entrata
-- Take Profit target: ${tpPct}% sopra il prezzo di entrata
+- Stop Loss: ${slPct}% sotto il prezzo di entrata
+- Take Profit: ${tpPct}% sopra il prezzo di entrata
+`;
 
-${getNewsContextForAgent(s.sym)}\n\nRispondi SOLO in questo formato esatto (non aggiungere altro):
+  // PHASE 3: Add historical context from agent_memory
+  const closedMem = agentMemory.filter(m => m.outcome === 'WIN' || m.outcome === 'LOSS');
+  if (closedMem.length > 0) {
+    const last20 = closedMem.slice(0, 20);
+    const wins = closedMem.filter(m => m.outcome === 'WIN').length;
+    const total = closedMem.length;
+    const winRate = Math.round(wins / total * 100);
+
+    prompt += `\nTUOI DATI STORICI (${total} trade chiusi, Win Rate: ${winRate}%):`;
+
+    // Last 20 trades
+    prompt += '\nUltimi 20 trade:';
+    last20.forEach(m => {
+      prompt += `\n- ${m.symbol}: ${m.signal} → ${m.outcome} (P&L: ${m.pnl_pct ? m.pnl_pct.toFixed(1) + '%' : '?'}, conf: ${m.confidence}/10, fonti: ${(m.sources_used||[]).join(',')})`;
+    });
+
+    // Win rate per symbol
+    const symStats = {};
+    closedMem.forEach(m => {
+      if (!symStats[m.symbol]) symStats[m.symbol] = { w: 0, l: 0 };
+      m.outcome === 'WIN' ? symStats[m.symbol].w++ : symStats[m.symbol].l++;
+    });
+    prompt += '\n\nWin rate per simbolo:';
+    Object.entries(symStats).forEach(([sym, st]) => {
+      prompt += `\n- ${sym}: ${Math.round(st.w / (st.w + st.l) * 100)}% (${st.w}W/${st.l}L)`;
+    });
+
+    // Source reliability
+    const srcStats = { alpaca_news: { w: 0, t: 0 }, rss_general: { w: 0, t: 0 }, geo_alert: { w: 0, t: 0 } };
+    closedMem.forEach(m => {
+      (m.sources_used || []).forEach(src => {
+        if (srcStats[src]) { srcStats[src].t++; if (m.outcome === 'WIN') srcStats[src].w++; }
+      });
+    });
+    prompt += '\n\nAffidabilità fonti:';
+    Object.entries(srcStats).forEach(([src, st]) => {
+      if (st.t > 0) prompt += `\n- ${src}: ${Math.round(st.w / st.t * 100)}% predittivo (${st.t} casi)`;
+    });
+
+    // Winning patterns
+    const patterns = {};
+    closedMem.forEach(m => {
+      const key = (m.sources_used || []).sort().join('+') + '|' + (m.geo_alert ? 'geo' : 'no-geo');
+      if (!patterns[key]) patterns[key] = { w: 0, l: 0 };
+      m.outcome === 'WIN' ? patterns[key].w++ : patterns[key].l++;
+    });
+    const topPatterns = Object.entries(patterns)
+      .map(([k, v]) => ({ pattern: k, wr: Math.round(v.w / (v.w + v.l) * 100), n: v.w + v.l }))
+      .filter(p => p.n >= 2)
+      .sort((a, b) => b.wr - a.wr)
+      .slice(0, 3);
+    if (topPatterns.length) {
+      prompt += '\n\nPattern vincenti identificati:';
+      topPatterns.forEach(p => {
+        prompt += `\n- ${p.pattern}: ${p.wr}% win rate (${p.n} casi)`;
+      });
+    }
+  }
+
+  // Current news context
+  prompt += '\n' + getNewsContextForAgent(s.sym);
+
+  prompt += `\n\nBasandoti sulla tua esperienza storica e le notizie attuali, rispondi SOLO in questo formato:
 SEGNALE: BUY oppure SELL oppure WAIT
 MOTIVO: [una frase breve in italiano, max 80 caratteri]
 RISCHIO: BASSO oppure MEDIO oppure ALTO
 CONFIDENZA: [numero da 1 a 10]`;
+
+  return prompt;
 }
 
 function parseSignal(txt) {
@@ -1336,6 +1583,7 @@ function executeAgentTrade(sig, side) {
   if (!s || s.price <= 0) return;
   const maxPos = parseInt(document.getElementById('max-pos').value);
   if (positions.length >= maxPos) { toast('Max posizioni raggiunto (' + maxPos + ')', true); return; }
+  if (positions.find(p => p.sym === sig.sym)) { alog(sig.sym + ': posizione già aperta, skip', 'info'); return; }
   const _sp = getSymParams(sig.sym);
   const slPct = _sp.sl / 100;
   const tpPct = _sp.tp / 100;
@@ -1345,12 +1593,12 @@ function executeAgentTrade(sig, side) {
   const qty = Math.max(1, Math.floor(riskAmt / slDist));
   const sl = parseFloat((s.price * (1 - slPct)).toFixed(2));
   const tp = parseFloat((s.price * (1 + tpPct)).toFixed(2));
-  const pos = { id: Date.now(), sym: s.sym, name: s.name, side, qty, entry: s.price, current: s.price, sl, tp, date: new Date().toLocaleDateString('it-IT') };
+  const pos = { id: Date.now(), sym: s.sym, name: s.name, side, qty, entry: s.price, current: s.price, sl, tp, date: new Date().toLocaleDateString('it-IT'), _memoryId: sig._memoryId || null, _isAgent: true };
   positions.push(pos);
   updateTopbar(); renderPositions();
   const eq = getEquity();
   equityHist.push(eq);
-  alog('AGENTE: ' + (side === 'buy' ? 'LONG' : 'SHORT') + ' ' + qty + 'x ' + s.sym + ' @ $' + s.price.toFixed(2), 'trade');
+  alog('AGENTE: ' + (side === 'buy' ? 'LONG' : 'SHORT') + ' ' + qty + 'x ' + s.sym + ' @ $' + s.price.toFixed(2) + ' [conf:' + (sig.signal?.conf || '?') + '/10]', 'trade');
   toast('🤖 Agente: ' + (side === 'buy' ? '▲ LONG' : '▼ SHORT') + ' ' + qty + 'x ' + s.sym);
   sbInsertPosition(pos);
   sbInsertEquity(eq);
@@ -1402,6 +1650,9 @@ function updateStats() {
   let peak = CAP, dd = 0;
   equityHist.forEach(e => { if (e > peak) peak = e; dd = Math.max(dd, (peak - e) / peak); });
   document.getElementById('sv-dd').textContent = (dd * 100).toFixed(2) + '%';
+
+  // Agent performance dashboard
+  renderAgentPerformance();
 }
 
 function drawEquity() {
@@ -1435,6 +1686,170 @@ function drawEquity() {
   ctx.strokeStyle = isUp ? '#00e676' : '#ff1744'; ctx.lineWidth = 2; ctx.beginPath();
   data.forEach((v,i) => { const x = pad.l + i*xS, y = yS(v); i===0 ? ctx.moveTo(x,y) : ctx.lineTo(x,y); });
   ctx.stroke();
+}
+
+// ─────────────────────────────
+// AGENT PERFORMANCE DASHBOARD
+// ─────────────────────────────
+function renderAgentPerformance() {
+  const mem = agentMemory || [];
+  const closed = mem.filter(m => m.outcome);
+  const wins = closed.filter(m => m.outcome === 'WIN');
+  const losses = closed.filter(m => m.outcome === 'LOSS');
+  const wr = closed.length ? ((wins.length / closed.length) * 100).toFixed(1) : '0.0';
+  const totalPnl = closed.reduce((s, m) => s + (m.pnl_pct || 0), 0);
+  const avgConf = mem.length ? (mem.reduce((s, m) => s + (m.confidence || 0), 0) / mem.length).toFixed(0) : '0';
+
+  const elWr = document.getElementById('ap-wr');
+  const elTr = document.getElementById('ap-trades');
+  const elPnl = document.getElementById('ap-pnl');
+  const elConf = document.getElementById('ap-avg-conf');
+  if (elWr) elWr.textContent = wr + '%';
+  if (elTr) elTr.textContent = closed.length;
+  if (elPnl) { elPnl.textContent = totalPnl.toFixed(2) + '%'; elPnl.style.color = totalPnl >= 0 ? '#00e676' : '#ff1744'; }
+  if (elConf) elConf.textContent = avgConf + '%';
+
+  // Win rate per symbol
+  const bySymbol = {};
+  closed.forEach(m => {
+    if (!bySymbol[m.symbol]) bySymbol[m.symbol] = { w: 0, l: 0 };
+    m.outcome === 'WIN' ? bySymbol[m.symbol].w++ : bySymbol[m.symbol].l++;
+  });
+  const symEl = document.getElementById('ap-per-symbol');
+  if (symEl) {
+    const sorted = Object.entries(bySymbol).sort((a, b) => (b[1].w + b[1].l) - (a[1].w + a[1].l)).slice(0, 8);
+    symEl.innerHTML = sorted.map(([sym, d]) => {
+      const tot = d.w + d.l, pct = ((d.w / tot) * 100).toFixed(0);
+      const barW = Math.max(5, parseInt(pct));
+      return `<div style="margin:4px 0;display:flex;align-items:center;gap:8px">
+        <span style="width:50px;font-weight:600;color:#fff">${sym}</span>
+        <div style="flex:1;background:#1e1e2f;border-radius:4px;height:18px;position:relative">
+          <div style="width:${barW}%;height:100%;background:${parseInt(pct)>=60?'#00e676':'#ff9800'};border-radius:4px"></div>
+          <span style="position:absolute;right:4px;top:0;font-size:11px;line-height:18px;color:#ccc">${pct}% (${tot})</span>
+        </div>
+      </div>`;
+    }).join('');
+  }
+
+  // Source reliability
+  const bySrc = {};
+  closed.forEach(m => {
+    (m.sources || []).forEach(src => {
+      if (!bySrc[src]) bySrc[src] = { w: 0, l: 0 };
+      m.outcome === 'WIN' ? bySrc[src].w++ : bySrc[src].l++;
+    });
+  });
+  const srcEl = document.getElementById('ap-sources');
+  if (srcEl) {
+    const sorted = Object.entries(bySrc).sort((a, b) => (b[1].w + b[1].l) - (a[1].w + a[1].l)).slice(0, 6);
+    srcEl.innerHTML = sorted.map(([src, d]) => {
+      const tot = d.w + d.l, pct = ((d.w / tot) * 100).toFixed(0);
+      return `<div style="margin:3px 0;display:flex;justify-content:space-between;font-size:13px">
+        <span style="color:#b0bec5">${src}</span>
+        <span style="color:${parseInt(pct)>=55?'#00e676':'#ff9800'};font-weight:600">${pct}% su ${tot}</span>
+      </div>`;
+    }).join('') || '<p style="color:#666;font-size:12px">Dati insufficienti</p>';
+  }
+
+  // Winning patterns
+  const patEl = document.getElementById('ap-patterns');
+  if (patEl) {
+    const patterns = {};
+    wins.forEach(m => {
+      const key = `${m.direction || 'LONG'} ${m.symbol}`;
+      if (!patterns[key]) patterns[key] = { count: 0, avgPnl: 0, totalPnl: 0 };
+      patterns[key].count++;
+      patterns[key].totalPnl += (m.pnl_pct || 0);
+    });
+    Object.keys(patterns).forEach(k => patterns[k].avgPnl = patterns[k].totalPnl / patterns[k].count);
+    const top = Object.entries(patterns).sort((a, b) => b[1].count - a[1].count).slice(0, 5);
+    patEl.innerHTML = top.map(([pat, d]) =>
+      `<div style="margin:3px 0;display:flex;justify-content:space-between;font-size:13px">
+        <span style="color:#b0bec5">${pat}</span>
+        <span style="color:#00e676">${d.count}x avg +${d.avgPnl.toFixed(2)}%</span>
+      </div>`
+    ).join('') || '<p style="color:#666;font-size:12px">Dati insufficienti</p>';
+  }
+
+  // Recent trades table
+  const recEl = document.getElementById('ap-recent');
+  if (recEl) {
+    const recent = closed.slice(-10).reverse();
+    recEl.innerHTML = recent.length ? `<table style="width:100%;font-size:12px;border-collapse:collapse">
+      <tr style="color:#666;text-align:left"><th>Data</th><th>Sym</th><th>Dir</th><th>Conf</th><th>P&L</th><th>Esito</th></tr>
+      ${recent.map(m => {
+        const d = m.created_at ? new Date(m.created_at).toLocaleDateString('it-IT', {day:'2-digit',month:'2-digit'}) : '--';
+        const pnl = (m.pnl_pct || 0).toFixed(2);
+        const col = m.outcome === 'WIN' ? '#00e676' : '#ff1744';
+        return `<tr style="border-top:1px solid #1e1e2f"><td style="padding:4px 2px;color:#999">${d}</td><td style="color:#fff;font-weight:600">${m.symbol||'--'}</td><td>${m.direction||'--'}</td><td>${m.confidence||0}%</td><td style="color:${col}">${pnl}%</td><td style="color:${col}">${m.outcome}</td></tr>`;
+      }).join('')}
+    </table>` : '<p style="color:#666;font-size:12px">Nessun trade agente completato</p>';
+  }
+
+  drawAgentEquity();
+}
+
+function drawAgentEquity() {
+  const cv = document.getElementById('eqAgentCanvas');
+  if (!cv) return;
+  const ctx = cv.getContext('2d');
+  const W = cv.width = cv.offsetWidth * (window.devicePixelRatio || 1);
+  const H = cv.height = cv.offsetHeight * (window.devicePixelRatio || 1);
+  ctx.scale(window.devicePixelRatio || 1, window.devicePixelRatio || 1);
+  const w = cv.offsetWidth, h = cv.offsetHeight;
+  ctx.clearRect(0, 0, w, h);
+
+  const mem = (agentMemory || []).filter(m => m.outcome);
+  if (mem.length < 2) {
+    ctx.fillStyle = '#666'; ctx.font = '12px sans-serif'; ctx.textAlign = 'center';
+    ctx.fillText('Dati insufficienti per il grafico', w / 2, h / 2);
+    return;
+  }
+
+  // Build equity curve from agent trades
+  const sorted = [...mem].sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+  let equity = 100;
+  const data = [100];
+  sorted.forEach(m => {
+    equity *= (1 + (m.pnl_pct || 0) / 100);
+    data.push(equity);
+  });
+
+  const pad = { t: 10, r: 10, b: 20, l: 40 };
+  const min = Math.min(...data) * 0.98, max = Math.max(...data) * 1.02;
+  const xS = (w - pad.l - pad.r) / (data.length - 1);
+  const yS = v => pad.t + (max - v) / (max - min) * (h - pad.t - pad.b);
+  const isUp = data[data.length - 1] >= data[0];
+
+  // Grid
+  ctx.strokeStyle = '#1e1e2f'; ctx.lineWidth = 0.5;
+  for (let i = 0; i < 4; i++) {
+    const y = pad.t + i * (h - pad.t - pad.b) / 3;
+    ctx.beginPath(); ctx.moveTo(pad.l, y); ctx.lineTo(w - pad.r, y); ctx.stroke();
+    const val = max - i * (max - min) / 3;
+    ctx.fillStyle = '#666'; ctx.font = '10px sans-serif'; ctx.textAlign = 'right';
+    ctx.fillText(val.toFixed(1), pad.l - 4, y + 4);
+  }
+
+  // Fill
+  const gr = ctx.createLinearGradient(0, pad.t, 0, h - pad.b);
+  gr.addColorStop(0, isUp ? 'rgba(0,230,118,0.25)' : 'rgba(255,23,68,0.25)');
+  gr.addColorStop(1, 'transparent');
+  ctx.beginPath(); ctx.moveTo(pad.l, yS(data[0]));
+  data.forEach((v, i) => ctx.lineTo(pad.l + i * xS, yS(v)));
+  ctx.lineTo(pad.l + (data.length - 1) * xS, h - pad.b);
+  ctx.lineTo(pad.l, h - pad.b); ctx.closePath();
+  ctx.fillStyle = gr; ctx.fill();
+
+  // Line
+  ctx.strokeStyle = isUp ? '#00e676' : '#ff1744'; ctx.lineWidth = 2; ctx.beginPath();
+  data.forEach((v, i) => { const x = pad.l + i * xS, y = yS(v); i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y); });
+  ctx.stroke();
+
+  // Current value label
+  const last = data[data.length - 1];
+  ctx.fillStyle = isUp ? '#00e676' : '#ff1744'; ctx.font = 'bold 11px sans-serif'; ctx.textAlign = 'left';
+  ctx.fillText(last.toFixed(1), pad.l + (data.length - 1) * xS + 4, yS(last) + 4);
 }
 
 // ─────────────────────────────
