@@ -1638,10 +1638,8 @@ function killAll() {
   [...positions].forEach(p => closePos(p.id));
 }
 
-function resetPortfolio() {
-  // Chiudi tutte le posizioni prima
-  [...positions].forEach(p => closePos(p.id));
-  // Reset tutto
+async function resetPortfolio() {
+  // Reset locale
   positions = [];
   closed = [];
   equityHist = [CAP];
@@ -1651,10 +1649,17 @@ function resetPortfolio() {
   renderPositions();
   updateStats();
   updateTradingCostsDisplay();
-  // Clear Supabase data
+  // Cancella TUTTO da Supabase (posizioni, trade chiusi, equity)
   if (sb) {
-    sb.from('paper_positions').delete().neq('id', '00000000-0000-0000-0000-000000000000').then(() => {});
-    sb.from('paper_closed_trades').delete().neq('id', '00000000-0000-0000-0000-000000000000').then(() => {});
+    try {
+      // gt('id', '00000000...') seleziona tutte le righe UUID
+      await sb.from('trading_positions').delete().gt('id', '00000000-0000-0000-0000-000000000000');
+      await sb.from('trading_closed_trades').delete().gt('id', '00000000-0000-0000-0000-000000000000');
+      await sb.from('trading_equity_history').delete().gt('id', '00000000-0000-0000-0000-000000000000');
+      alog('Supabase: posizioni, trade e equity cancellati', 'ok');
+    } catch(e) {
+      alog('Errore pulizia Supabase: ' + e.message, 'err');
+    }
   }
   toast('Portafoglio resettato a $100,000');
   alog('🔄 RESET PORTAFOGLIO — ripartenza da $100,000 con simulazione realistica', 'ok');
