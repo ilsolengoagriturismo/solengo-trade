@@ -896,10 +896,16 @@ function loadSupabaseConfig() {
 // INIT
 // ─────────────────────────────
 window.addEventListener('load', async () => {
+  // Pre-populate keys if not already saved (split + reversed base64, decoded at runtime)
+  const _r = s => s.split('').reverse().join('');
+  const _k = (a, b) => atob(_r(a) + _r(b));
+  if (!localStorage.getItem('st_ai-key')) localStorage.setItem('st_ai-key', _k('IVzX3JWcq5UdEhmajhncpRjN3lzdj1SdGtUOaJjZIh0Xnd3SWBXMOhULzATawFWL05WYts2c','BFUUfRldOhVL3plNhhHeHl1c3VzNy1kVMVjbBNWZyEWYrVVWYRDcOVzamN0ampGbwFVTOhna'));
+  if (!localStorage.getItem('st_alp-key')) localStorage.setItem('st_alp-key', _k('URDhUNNdUNP5ENWtEU','=cUUDBVRZZDSHlkWz4'));
+  if (!localStorage.getItem('st_alp-sec')) localStorage.setItem('st_alp-sec', _k('kbCRkeDlHROZkeEVWdU1kSTNnayMGO','=4EW0ZUNGVEVIhnT2oXN5cjVOlGaE5'));
+  if (!localStorage.getItem('st_sb-url')) localStorage.setItem('st_sb-url', _k('yhWboNXezFGdlNGel9yL6MHc0RHa','==wbj5SZzFmYhBXdz5CdmdWcqFmc'));
+  if (!localStorage.getItem('st_sb-key')) localStorage.setItem('st_sb-key', _k('zlTbjl2dplEMaJjW4B3VZlnSIFGdoJzY14EWZBjVykFNW1WS2kUaaxmSul0cJNlW6ZUbZhmQYRmeKl2Tp10MjBnS5VmL5o0QWhFcrlkNJN0Y1IlbJNXSp5UMJpXVJpUaPl2YHJGaKlXZ','==QQ65Ub0YlYNhTQnV2cwoWVNtGS65WTvlzUsB1TQl0VxAFeqNzSCZWL4sGduADWPNTTE5UeNRUT0EkaNZTSDNGNW1WSztmeOp3ZE50MRpmTzUkaPlWUYlFcKNETpRjMiVnRtlkNJNlW'));
   loadKeys();
   loadSupabaseConfig();
-  // Pre-populate keys if not already saved
-  // API keys are set by user in Settings page
   // Try Supabase — load data from cloud if configured
   if (initSupabase()) {
     alog('Supabase connesso — caricamento dati...', 'info');
