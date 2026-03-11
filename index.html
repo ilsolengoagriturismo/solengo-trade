@@ -480,6 +480,16 @@ canvas#eqCanvas{width:100%;height:120px}
               <span class="toggle-slider"></span>
             </label>
           </div>
+          <div style="display:flex;align-items:center;justify-content:space-between;background:var(--bg3);border:1px solid var(--brd);border-radius:8px;padding:10px 12px;margin-bottom:10px">
+            <div>
+              <div style="font-size:11px;font-weight:700;color:#bb86fc;letter-spacing:1px">🔍 SCOPERTA AUTONOMA <span class="help-btn" onclick="openHelp('discovery')">?</span></div>
+              <div style="font-size:9px;color:var(--txd);margin-top:2px" id="discovery-status">Inattiva — l'agente opera solo sulla watchlist</div>
+            </div>
+            <label class="toggle">
+              <input type="checkbox" id="discovery-toggle" onchange="toggleDiscovery()">
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
           <button class="btn-scan" id="btn-scan" onclick="runAgentScan()">⚡ SCANSIONA WATCHLIST ORA</button>
         </div>
 
@@ -745,6 +755,13 @@ canvas#eqCanvas{width:100%;height:120px}
             <div class="guide-arrow">›</div>
           </div>
         </div>
+        <div class="guide-card" onclick="openHelp('discovery')">
+          <div class="guide-card-row">
+            <div class="guide-icon">🔍</div>
+            <div class="guide-card-txt"><div class="guide-card-title">Scoperta Autonoma</div><div class="guide-card-desc">L'agente cerca e aggiunge nuovi ticker da solo</div></div>
+            <div class="guide-arrow">›</div>
+          </div>
+        </div>
         <div class="guide-card" onclick="openHelp('orders')">
           <div class="guide-card-row">
             <div class="guide-icon">📝</div>
@@ -974,7 +991,8 @@ let activeSheetSym = null;
 let autopilotActive = false;
 let autopilotTimer = null;
 let slTpMonitorTimer = null;
-let agentMemory = []; // loaded from Supabase
+let agentMemory = [];
+let discoveryActive = false; // loaded from Supabase
 
 // ─────────────────────────────
 // SUPABASE PERSISTENCE LAYER
@@ -1485,6 +1503,83 @@ function toggleAutopilot() {
   }
 }
 
+function toggleDiscovery() {
+  discoveryActive = document.getElementById('discovery-toggle').checked;
+  document.getElementById('discovery-status').textContent = discoveryActive
+    ? 'Attiva — l\'agente cerca nuove opportunità ad ogni scan'
+    : 'Inattiva — l\'agente opera solo sulla watchlist';
+  alog(discoveryActive ? '🔍 Scoperta autonoma ATTIVATA' : '🔍 Scoperta autonoma disattivata', discoveryActive ? 'ok' : 'info');
+}
+
+async function discoverTickers() {
+  const aiKey = getSetting('ai-key');
+  if (!aiKey) return [];
+  alog('🔍 Scoperta: cerco nuove opportunità di mercato...', 'info');
+
+  const currentSymbols = watchlist.map(s => s.sym).join(', ');
+  const posSymbols = positions.map(p => p.sym).join(', ');
+
+  // Build market context
+  let marketCtx = '';
+  const idxData = document.getElementById('idx-scanner-list')?.textContent || '';
+  if (idxData.length > 20) marketCtx = 'Stato indici: ' + idxData.substring(0, 500);
+
+  // Recent news context
+  const newsCtx = allNews.slice(0, 10).map(n => n.title).join('; ');
+
+  const prompt = `Sei un trader professionista. Analizza le condizioni di mercato attuali e suggerisci ticker AZIONARI USA (NYSE/NASDAQ) su cui vale la pena operare oggi.
+
+CONTESTO MERCATO:
+${marketCtx || 'Nessun dato indici disponibile'}
+
+NOTIZIE RECENTI:
+${newsCtx || 'Nessuna notizia disponibile'}
+
+TICKER GIÀ IN WATCHLIST (da NON suggerire): ${currentSymbols}
+POSIZIONI APERTE: ${posSymbols || 'nessuna'}
+
+REGOLE:
+- Suggerisci da 1 a 3 ticker che presentano opportunità concrete OGGI
+- Solo azioni USA reali (NYSE o NASDAQ), no ETF se non rilevanti
+- Considera momentum, notizie, earnings, settori in trend
+- Se non vedi opportunità chiare, rispondi con 0 ticker
+
+Rispondi SOLO in questo formato (un ticker per riga):
+TICKER: SIMBOLO | NOME_AZIENDA | MOTIVO_BREVE
+(oppure scrivi NESSUNO se non ci sono opportunità)`;
+
+  try {
+    const res = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-api-key': aiKey, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
+      body: JSON.stringify({ model: 'claude-sonnet-4-20250514', max_tokens: 400, messages: [{ role: 'user', content: prompt }] })
+    });
+    if (!res.ok) { alog('🔍 Errore API discovery', 'err'); return []; }
+    const data = await res.json();
+    const txt = data.content?.[0]?.text || '';
+
+    if (txt.includes('NESSUNO') || !txt.includes('TICKER:')) {
+      alog('🔍 Nessuna nuova opportunità individuata', 'info');
+      return [];
+    }
+
+    const tickers = [];
+    const matches = txt.matchAll(/TICKER:\s*(\w+)\s*\|\s*([^|]+)\|\s*(.+)/g);
+    for (const m of matches) {
+      const sym = m[1].trim().toUpperCase();
+      const name = m[2].trim();
+      const reason = m[3].trim();
+      if (sym && !watchlist.find(s => s.sym === sym)) {
+        tickers.push({ sym, name, reason });
+      }
+    }
+    return tickers;
+  } catch (e) {
+    alog('🔍 Errore discovery: ' + e.message, 'err');
+    return [];
+  }
+}
+
 async function monitorSLTP() {
   if (!positions.length) return;
   alog('Monitor SL/TP: controllo ' + positions.length + ' posizioni...', 'info');
@@ -1522,6 +1617,25 @@ async function runAgentScan() {
   btn.disabled = true; btn.textContent = '⏳ ANALISI IN CORSO...';
   alog('Scansione avviata su ' + watchlist.length + ' titoli', 'info');
   pendingSignals = [];
+
+  // Discovery: find new tickers before scanning
+  if (discoveryActive) {
+    try {
+      const discovered = await discoverTickers();
+      for (const d of discovered) {
+        const item = { sym: d.sym, name: d.name, price: 0, signal: null, _discovered: true };
+        watchlist.push(item);
+        initSymParams();
+        alog('🔍 Scoperto: ' + d.sym + ' (' + d.name + ') — ' + d.reason, 'trade');
+        await fetchPrice(item);
+        sbUpsertWatchItem(item);
+      }
+      if (discovered.length) {
+        renderMarket();
+        document.getElementById('wl-count').textContent = watchlist.length;
+      }
+    } catch (e) { alog('Errore discovery: ' + e.message, 'err'); }
+  }
 
   for (const s of watchlist) {
     if (s.price <= 0) continue;
@@ -2993,6 +3107,31 @@ const HELP_CONTENT = {
 <li>Chiude automaticamente le posizioni che hanno raggiunto il target</li>
 </ul>
 <div class="tip"><b>Sicurezza:</b> È tutto paper trading con denaro virtuale. Nessun rischio reale. Ideale per testare strategie mentre non sei davanti allo schermo.</div>`
+  },
+
+  discovery: {
+    title: 'SCOPERTA AUTONOMA',
+    body: `<h3>Cos'è</h3>
+<p>Quando attiva, l'agente <span class="hl">cerca autonomamente nuove opportunità</span> di mercato prima di ogni scansione. Analizza notizie, trend e condizioni di mercato per individuare ticker promettenti che non sono ancora nella tua watchlist.</p>
+<h3>Come funziona</h3>
+<ul>
+<li>Ad ogni ciclo di scansione, l'AI analizza <span class="hl">notizie recenti</span>, <span class="hl">stato degli indici</span> e <span class="hl">trend di mercato</span></li>
+<li>Suggerisce da <span class="hl">1 a 3 ticker</span> con opportunità concrete</li>
+<li>I ticker scoperti vengono <span class="hl">aggiunti automaticamente</span> alla watchlist</li>
+<li>Vengono poi analizzati normalmente dall'agente (con segnali BUY/SELL/WAIT)</li>
+<li>In modalità autopilota, l'agente può anche <span class="hl">aprire posizioni</span> sui ticker scoperti</li>
+</ul>
+<h3>Come attivarlo</h3>
+<p>Attiva il toggle <span class="hl">SCOPERTA AUTONOMA</span> nella pagina Agente. Funziona sia con l'agente in modalità suggerimento che automatica.</p>
+<h3>Cosa considera l'AI</h3>
+<ul>
+<li>Notizie macro e geopolitiche in tempo reale</li>
+<li>Stato degli indici globali (trend positivo/negativo)</li>
+<li>Settori in momentum</li>
+<li>Earnings e catalyst aziendali</li>
+<li>Evita di suggerire ticker già in watchlist</li>
+</ul>
+<div class="tip"><b>Combinazione ideale:</b> Autopilota + Scoperta Autonoma = l'agente trova opportunità, le analizza e opera in totale autonomia. È il livello massimo di automazione.</div>`
   },
 
   orders: {
