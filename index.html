@@ -426,11 +426,11 @@ canvas#eqCanvas{width:100%;height:120px}
           <div class="agent-params">
             <div class="param-group">
               <div class="param-label">RISCHIO / TRADE</div>
-              <input type="number" class="param-inp" id="risk-pct" value="2" min="1" max="10"> <span style="font-size:10px;color:var(--txd)">% capitale</span>
+              <input type="number" class="param-inp" id="risk-pct" value="3" min="1" max="15"> <span style="font-size:10px;color:var(--txd)">% capitale</span>
             </div>
             <div class="param-group">
               <div class="param-label">MAX POSIZIONI</div>
-              <input type="number" class="param-inp" id="max-pos" value="15" min="1" max="30">
+              <input type="number" class="param-inp" id="max-pos" value="50" min="1" max="100">
             </div>
             <div class="param-group">
               <div class="param-label">STOP LOSS</div>
@@ -1500,10 +1500,10 @@ function toggleAgent() {
   document.getElementById('toggle-lbl').textContent = agentActive ? 'ON' : 'OFF';
   document.getElementById('agent-badge').textContent = agentActive ? '🤖 AGENTE ON' : '🤖 AGENTE OFF';
   document.getElementById('agent-badge').className = 'badge-agent ' + (agentActive ? 'on' : 'off');
-  document.getElementById('agent-status-txt').textContent = agentActive ? 'Agente attivo — scansione ogni 10 min' : 'Agente inattivo';
+  document.getElementById('agent-status-txt').textContent = agentActive ? 'Agente attivo — scansione ogni 5 min' : 'Agente inattivo';
   if (agentActive) {
     alog('Agente attivato — modalità: ' + document.getElementById('agent-mode').value, 'ok');
-    agentTimer = setInterval(runAgentScan, 10 * 60 * 1000);
+    agentTimer = setInterval(runAgentScan, 5 * 60 * 1000);
     // Run first scan immediately
     setTimeout(runAgentScan, 2000);
   } else {
@@ -1515,15 +1515,15 @@ function toggleAgent() {
 function toggleAutopilot() {
   autopilotActive = document.getElementById('autopilot-toggle').checked;
   document.getElementById('autopilot-status').textContent = autopilotActive
-    ? 'Attivo — scan 10min, SL/TP 2min'
+    ? 'Attivo — scan 5min, SL/TP 1min'
     : 'Inattivo';
   if (autopilotActive) {
     // Force auto mode + agent on
     document.getElementById('agent-mode').value = 'auto';
     if (!agentActive) { document.getElementById('agent-toggle').checked = true; toggleAgent(); }
-    // Start SL/TP monitor every 2 minutes
-    slTpMonitorTimer = setInterval(monitorSLTP, 2 * 60 * 1000);
-    alog('⚡ AUTOPILOTA ATTIVATO — scan 10min, monitor SL/TP 2min', 'ok');
+    // Start SL/TP monitor every 1 minute
+    slTpMonitorTimer = setInterval(monitorSLTP, 60 * 1000);
+    alog('⚡ AUTOPILOTA ATTIVATO — scan 5min, monitor SL/TP 1min', 'ok');
     monitorSLTP(); // run immediately
   } else {
     clearInterval(slTpMonitorTimer);
@@ -1567,8 +1567,8 @@ TICKER GIÀ IN WATCHLIST (da NON suggerire): ${currentSymbols}
 POSIZIONI APERTE: ${posSymbols || 'nessuna'}
 
 REGOLE:
-- Suggerisci da 1 a 3 ticker che presentano opportunità concrete OGGI
-- Solo azioni USA reali (NYSE o NASDAQ), no ETF se non rilevanti
+- Suggerisci da 3 a 5 ticker che presentano opportunità concrete OGGI
+- Solo azioni USA reali (NYSE o NASDAQ), ETF settoriali ammessi
 - Considera momentum, notizie, earnings, settori in trend
 - Se non vedi opportunità chiare, rispondi con 0 ticker
 
@@ -1726,15 +1726,26 @@ async function runAgentScan() {
   // Auto/Autopilot mode: execute BUY and SELL automatically
   const isAuto = document.getElementById('agent-mode').value === 'auto' || autopilotActive;
   if (isAuto) {
+    const maxPos = parseInt(document.getElementById('max-pos').value);
     for (const sig of pendingSignals) {
-      if (sig.signal.action === 'BUY' && positions.length < parseInt(document.getElementById('max-pos').value)) {
+      if (sig.signal.action === 'BUY' && positions.length < maxPos) {
         executeAgentTrade(sig, 'buy');
+        // High confidence (8+): open a second position to scale in
+        if (sig.signal.conf >= 8 && positions.length < maxPos) {
+          alog('⚡ ALTA CONFIDENZA (' + sig.signal.conf + '/10) — doppia posizione su ' + sig.sym, 'trade');
+          executeAgentTrade(sig, 'buy');
+        }
       } else if (sig.signal.action === 'SELL' && autopilotActive) {
-        // In autopilot, also close existing long positions on SELL signal
-        const existingPos = positions.find(p => p.sym === sig.sym && p.side === 'buy');
-        if (existingPos) {
+        // Close existing long positions on SELL signal
+        const existingLongs = positions.filter(p => p.sym === sig.sym && p.side === 'buy');
+        for (const ep of existingLongs) {
           alog('AUTOPILOTA: chiusura LONG ' + sig.sym + ' su segnale SELL', 'trade');
-          closePos(existingPos.id);
+          closePos(ep.id);
+        }
+        // Also open SHORT position if high confidence
+        if (sig.signal.conf >= 7 && positions.length < maxPos) {
+          alog('⚡ SHORT su ' + sig.sym + ' — segnale SELL conf ' + sig.signal.conf, 'trade');
+          executeAgentTrade(sig, 'sell');
         }
       }
     }
@@ -3098,18 +3109,18 @@ const HELP_CONTENT = {
 <p>Un trader AI basato su <span class="hl">Anthropic Claude</span> che analizza ogni titolo in watchlist e genera segnali operativi.</p>
 <h3>Come attivarlo</h3>
 <ul>
-<li>Attiva il <span class="hl">toggle ON/OFF</span> — l'agente inizia a scansionare ogni 3 minuti</li>
+<li>Attiva il <span class="hl">toggle ON/OFF</span> — l'agente inizia a scansionare ogni 5 minuti</li>
 <li>Oppure premi <span class="hl">SCANSIONA WATCHLIST ORA</span> per una scansione immediata</li>
 </ul>
 <h3>Modalità</h3>
 <ul>
 <li><span class="hl">SUGGERIMENTO</span> — l'agente genera segnali ma non opera. Sei tu ad approvare ogni trade dal pannello segnali</li>
-<li><span class="hl">AUTOMATICO</span> — l'agente esegue i BUY automaticamente (rispettando il limite max posizioni)</li>
+<li><span class="hl">AUTOMATICO</span> — l'agente esegue i BUY automaticamente. Con confidenza ≥8 apre DOPPIA posizione sullo stesso ticker</li>
 </ul>
 <h3>Parametri</h3>
 <ul>
-<li><span class="hl">Rischio/Trade</span> — % del capitale per ogni operazione (default: 2%)</li>
-<li><span class="hl">Max Posizioni</span> — numero massimo di posizioni aperte contemporanee</li>
+<li><span class="hl">Rischio/Trade</span> — % del capitale per ogni operazione (default: 3%)</li>
+<li><span class="hl">Max Posizioni</span> — numero massimo di posizioni aperte contemporanee (default: 50, max: 100)</li>
 <li><span class="hl">Stop Loss</span> — % di perdita massima prima della chiusura automatica</li>
 <li><span class="hl">Take Profit</span> — % di guadagno per chiusura automatica in profitto</li>
 </ul>
@@ -3123,7 +3134,7 @@ const HELP_CONTENT = {
 <li>Notizie macro e geopolitiche (feed RSS)</li>
 <li>Storico dei propri trade passati (apprendimento)</li>
 </ul>
-<div class="tip"><b>Confidenza:</b> Ogni segnale ha un punteggio da 1 a 10. L'agente esegue solo trade con confidenza sufficiente.</div>`
+<div class="tip"><b>Scaling:</b> Con confidenza ≥8 l'agente apre posizioni doppie. Con SELL e confidenza ≥7 apre anche SHORT. In autopilot il monitor SL/TP gira ogni minuto.</div>`
   },
 
   autopilot: {
