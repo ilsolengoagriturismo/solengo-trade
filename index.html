@@ -430,7 +430,7 @@ canvas#eqCanvas{width:100%;height:120px}
             </div>
             <div class="param-group">
               <div class="param-label">MAX POSIZIONI</div>
-              <input type="number" class="param-inp" id="max-pos" value="3" min="1" max="10">
+              <input type="number" class="param-inp" id="max-pos" value="5" min="1" max="15">
             </div>
             <div class="param-group">
               <div class="param-label">STOP LOSS</div>
@@ -1474,10 +1474,12 @@ function toggleAgent() {
   document.getElementById('toggle-lbl').textContent = agentActive ? 'ON' : 'OFF';
   document.getElementById('agent-badge').textContent = agentActive ? '🤖 AGENTE ON' : '🤖 AGENTE OFF';
   document.getElementById('agent-badge').className = 'badge-agent ' + (agentActive ? 'on' : 'off');
-  document.getElementById('agent-status-txt').textContent = agentActive ? 'Agente attivo — scansione automatica ogni 30 min' : 'Agente inattivo';
+  document.getElementById('agent-status-txt').textContent = agentActive ? 'Agente attivo — scansione ogni 10 min' : 'Agente inattivo';
   if (agentActive) {
     alog('Agente attivato — modalità: ' + document.getElementById('agent-mode').value, 'ok');
-    agentTimer = setInterval(runAgentScan, 30 * 60 * 1000);
+    agentTimer = setInterval(runAgentScan, 10 * 60 * 1000);
+    // Run first scan immediately
+    setTimeout(runAgentScan, 2000);
   } else {
     clearInterval(agentTimer);
     alog('Agente disattivato', 'info');
@@ -1487,15 +1489,15 @@ function toggleAgent() {
 function toggleAutopilot() {
   autopilotActive = document.getElementById('autopilot-toggle').checked;
   document.getElementById('autopilot-status').textContent = autopilotActive
-    ? 'Attivo — scansione 30min, monitor SL/TP 5min'
+    ? 'Attivo — scan 10min, SL/TP 2min'
     : 'Inattivo';
   if (autopilotActive) {
     // Force auto mode + agent on
     document.getElementById('agent-mode').value = 'auto';
     if (!agentActive) { document.getElementById('agent-toggle').checked = true; toggleAgent(); }
-    // Start SL/TP monitor every 5 minutes
-    slTpMonitorTimer = setInterval(monitorSLTP, 5 * 60 * 1000);
-    alog('⚡ AUTOPILOTA ATTIVATO — monitor SL/TP ogni 5 min', 'ok');
+    // Start SL/TP monitor every 2 minutes
+    slTpMonitorTimer = setInterval(monitorSLTP, 2 * 60 * 1000);
+    alog('⚡ AUTOPILOTA ATTIVATO — scan 10min, monitor SL/TP 2min', 'ok');
     monitorSLTP(); // run immediately
   } else {
     clearInterval(slTpMonitorTimer);
@@ -1729,9 +1731,18 @@ function buildAgentPrompt(s) {
   const slPct = sp.sl;
   const tpPct = sp.tp;
 
-  let prompt = `Sei un trader professionista con 20 anni di esperienza sui mercati USA. Analizzi ogni decisione basandoti sui tuoi dati storici e sulla tua esperienza passata.
+  const hasOpenPos = positions.some(p => p.sym === s.sym);
+  let prompt = `Sei un trader aggressivo e dinamico con 20 anni di esperienza sui mercati USA. Il tuo obiettivo è MASSIMIZZARE i profitti cogliendo ogni opportunità. NON sei un consulente prudente — sei un OPERATORE che vuole fare soldi.
+
+REGOLE DI INGAGGIO:
+- Preferisci AGIRE (BUY o SELL) piuttosto che WAIT
+- Usa WAIT SOLO se il titolo è in un range strettissimo senza catalyst
+- Se c'è anche solo un segnale moderato, OPERA
+- È paper trading: non c'è rischio reale, quindi sii AUDACE
+- Se hai già una posizione aperta su questo titolo e va bene, puoi suggerire BUY per raddoppiare
 
 TITOLO: ${s.sym} (${s.name}) — Prezzo attuale: $${s.price.toFixed(2)}
+${hasOpenPos ? '⚠ HAI GIÀ UNA POSIZIONE APERTA su questo titolo' : ''}
 
 PARAMETRI OPERATIVI:
 - Rischio per trade: ${riskPct}% del capitale
@@ -1801,7 +1812,9 @@ PARAMETRI OPERATIVI:
   // Current news context
   prompt += '\n' + getNewsContextForAgent(s.sym);
 
-  prompt += `\n\nBasandoti sulla tua esperienza storica e le notizie attuali, rispondi SOLO in questo formato:
+  prompt += `\n\nIMPORTANTE: Sei un trader ATTIVO. Non dire WAIT solo perché non sei sicuro al 100%. Se vedi un'opportunità anche parziale, OPERA. Ricorda: è paper trading, nessun rischio reale.
+
+Basandoti sulla tua esperienza storica e le notizie attuali, rispondi SOLO in questo formato:
 SEGNALE: BUY oppure SELL oppure WAIT
 MOTIVO: [una frase breve in italiano, max 80 caratteri]
 RISCHIO: BASSO oppure MEDIO oppure ALTO
@@ -1855,7 +1868,7 @@ function executeAgentTrade(sig, side) {
   if (!s || s.price <= 0) return;
   const maxPos = parseInt(document.getElementById('max-pos').value);
   if (positions.length >= maxPos) { toast('Max posizioni raggiunto (' + maxPos + ')', true); return; }
-  if (positions.find(p => p.sym === sig.sym)) { alog(sig.sym + ': posizione già aperta, skip', 'info'); return; }
+  // Allow multiple positions on same ticker (agent can double down)
   const _sp = getSymParams(sig.sym);
   const slPct = _sp.sl / 100;
   const tpPct = _sp.tp / 100;
@@ -3092,9 +3105,9 @@ const HELP_CONTENT = {
 <p>La modalità autopilota rende l'agente <span class="hl">completamente autonomo</span>. Compra, vende e gestisce le posizioni senza intervento umano.</p>
 <h3>Cosa fa</h3>
 <ul>
-<li><span class="hl">Scansione automatica</span> ogni 30 minuti su tutti i titoli in watchlist</li>
+<li><span class="hl">Scansione automatica</span> ogni 10 minuti su tutti i titoli in watchlist</li>
 <li><span class="hl">Esecuzione automatica</span> dei segnali BUY e SELL</li>
-<li><span class="hl">Monitor SL/TP</span> ogni 5 minuti — chiude le posizioni che toccano stop loss o take profit</li>
+<li><span class="hl">Monitor SL/TP</span> ogni 2 minuti — chiude le posizioni che toccano stop loss o take profit</li>
 <li><span class="hl">Chiusura LONG su SELL</span> — se il segnale è SELL e hai una posizione LONG aperta, la chiude</li>
 </ul>
 <h3>Come attivarlo</h3>
