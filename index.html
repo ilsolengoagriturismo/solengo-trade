@@ -949,6 +949,7 @@ async function sbInsertMemory(mem) {
       symbol: mem.symbol,
       signal: mem.signal,
       confidence: mem.confidence,
+      direction: mem.direction || null,
       sources_used: mem.sources_used,
       entry_price: mem.entry_price,
       exit_price: mem.exit_price,
@@ -1406,6 +1407,7 @@ async function runAgentScan() {
       // Save to agent_memory
       const memId = await sbInsertMemory({
         symbol: s.sym, signal: signal.action, confidence: signal.conf,
+        direction: signal.action === 'BUY' ? 'LONG' : signal.action === 'SELL' ? 'SHORT' : null,
         sources_used: sourcesUsed, entry_price: s.price,
         exit_price: null, pnl_pct: null, outcome: signal.action === 'WAIT' ? 'WAIT' : 'OPEN',
         news_titles: newsTitles, geo_alert: geoAlert
