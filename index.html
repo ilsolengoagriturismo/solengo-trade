@@ -1580,23 +1580,22 @@ function calcSheetRisk() {
 function placeOrder(side) {
   const s = watchlist.find(x => x.sym === activeSheetSym);
   if (!s || s.price <= 0) { toast('Prezzo non disponibile', true); return; }
+  if (s.price < 2) { toast('Prezzo < $2 non ammesso', true); return; }
   let qty = parseInt(document.getElementById('sh-qty').value) || 1;
   const sl = parseFloat(document.getElementById('sh-sl').value) || null;
   const tp = parseFloat(document.getElementById('sh-tp').value) || null;
   const entryPrice = parseFloat(applyEntrySlippage(s.price, side).toFixed(2));
 
-  // CAP posizione: max 10% equity
-  const equity = getEquity();
-  const maxPosValue = equity * 0.10;
-  if (qty * entryPrice > maxPosValue) {
-    qty = Math.max(1, Math.floor(maxPosValue / entryPrice));
-    toast('Qty ridotta a ' + qty + ' (max 10% equity)', true);
+  // Hard limits (basati su CAP fisso, mai su equity gonfiata)
+  if (qty > 500) { qty = 500; toast('Max 500 azioni per ordine', true); }
+  if (qty * entryPrice > CAP * 0.05) {
+    qty = Math.max(1, Math.floor(CAP * 0.05 / entryPrice));
+    toast('Qty ridotta a ' + qty + ' (max $' + (CAP * 0.05).toLocaleString() + ')', true);
   }
-  // CAP esposizione totale: max 100% equity (no leva)
   const currentExposure = positions.reduce((sum, p) => sum + p.entry * p.qty, 0);
-  if (currentExposure + qty * entryPrice > equity) {
-    qty = Math.max(1, Math.floor((equity - currentExposure) / entryPrice));
-    if (qty <= 0 || currentExposure >= equity) { toast('Esposizione massima raggiunta', true); return; }
+  if (currentExposure + qty * entryPrice > CAP) {
+    qty = Math.max(1, Math.floor((CAP - currentExposure) / entryPrice));
+    if (qty <= 0 || currentExposure >= CAP) { toast('Esposizione massima raggiunta ($' + CAP.toLocaleString() + ')', true); return; }
   }
 
   addCommission(COMMISSION_PER_TRADE);
@@ -1749,15 +1748,15 @@ async function runAudit() {
 
     const flags = [];
     // Check 1: Prezzo d'entrata troppo diverso dal mercato (>30%)
-    if (entryDeviation > 30) flags.push('PREZZO ENTRATA SOSPETTO: $' + p.entry.toFixed(2) + ' vs mercato $' + marketPrice.toFixed(2) + ' (dev ' + entryDeviation.toFixed(0) + '%)');
-    // Check 2: Posizione troppo grande (>15% equity)
-    if (leverageRatio > 0.15) flags.push('POSIZIONE ENORME: $' + posValue.toLocaleString('en', {maximumFractionDigits:0}) + ' = ' + (leverageRatio*100).toFixed(0) + '% equity');
-    // Check 3: P&L irrealistico (>100%)
-    if (Math.abs(pnlPct) > 100) flags.push('P&L IRREALISTICO: ' + (pnlPct > 0 ? '+' : '') + pnlPct.toFixed(0) + '%');
-    // Check 4: Qty troppo alta (>5000 azioni)
-    if (p.qty > 5000) flags.push('QTY ANOMALA: ' + p.qty + ' azioni');
-    // Check 5: Entry price < $1 (quasi sicuramente bug)
-    if (p.entry < 1) flags.push('ENTRY < $1: probabile bug');
+    if (entryDeviation > 30) flags.push('PREZZO SOSPETTO: $' + p.entry.toFixed(2) + ' vs mercato $' + marketPrice.toFixed(2) + ' (dev ' + entryDeviation.toFixed(0) + '%)');
+    // Check 2: Posizione > 5% del CAP ($5,000)
+    if (posValue > CAP * 0.05) flags.push('POSIZIONE TROPPO GRANDE: $' + posValue.toLocaleString('en', {maximumFractionDigits:0}) + ' (max $' + (CAP*0.05).toLocaleString() + ')');
+    // Check 3: P&L irrealistico (>50%)
+    if (Math.abs(pnlPct) > 50) flags.push('P&L IRREALISTICO: ' + (pnlPct > 0 ? '+' : '') + pnlPct.toFixed(0) + '%');
+    // Check 4: Qty > 500
+    if (p.qty > 500) flags.push('QTY ANOMALA: ' + p.qty + ' (max 500)');
+    // Check 5: Entry price < $2 (penny stock)
+    if (p.entry < 2) flags.push('ENTRY < $2: penny stock non ammesso');
 
     if (flags.length > 0) {
       anomalies++;
@@ -1794,7 +1793,7 @@ async function purgeAnomalies() {
     const entryDeviation = marketPrice > 0 ? Math.abs(p.entry - marketPrice) / marketPrice * 100 : 0;
     const pnlPct = Math.abs((p.current - p.entry) / p.entry * 100);
     // Criteri chiari: qty >5000, entry <$1, entry deviato >30%, P&L >100%, posizione >$100K
-    if (p.qty > 5000 || p.entry < 1 || entryDeviation > 30 || pnlPct > 100 || p.entry * p.qty > CAP) {
+    if (p.qty > 500 || p.entry < 2 || entryDeviation > 30 || pnlPct > 50 || p.entry * p.qty > CAP * 0.05) {
       toRemove.push(p);
     }
   }
@@ -2286,14 +2285,33 @@ async function executeAgentTrade(sig, side) {
   const maxPos = parseInt(document.getElementById('max-pos').value);
   if (positions.length >= maxPos) { toast('Max posizioni raggiunto (' + maxPos + ')', true); return; }
 
-  // Refresh prezzo prima di aprire — evita prezzi stale/sbagliati
+  // ── HARD LIMITS (come un broker reale) ──
+  const MAX_QTY = 500;              // max 500 azioni per ordine
+  const MAX_POS_VALUE = CAP * 0.05; // max 5% del capitale iniziale ($5,000)
+  const MAX_EXPOSURE = CAP;          // esposizione totale max = capitale iniziale
+  const MIN_PRICE = 2.00;            // no penny stocks sotto $2
+
+  // Refresh prezzo prima di aprire
   const priceBefore = s.price;
   await fetchPrice(s);
-  if (s.price <= 0) { alog(s.sym + ': prezzo non disponibile, trade annullato', 'err'); return; }
+  if (s.price <= 0) { alog(s.sym + ': prezzo non disponibile, skip', 'err'); return; }
 
-  // Sanity check: se il prezzo e' cambiato >50% rispetto al segnale, non aprire
-  if (priceBefore > 0 && Math.abs(s.price - priceBefore) / priceBefore > 0.5) {
-    alog(s.sym + ': prezzo cambiato troppo ($' + priceBefore.toFixed(2) + ' -> $' + s.price.toFixed(2) + '), trade annullato', 'err');
+  // Rifiuta penny stocks
+  if (s.price < MIN_PRICE) {
+    alog(s.sym + ': prezzo $' + s.price.toFixed(2) + ' < $' + MIN_PRICE + ', skip', 'err');
+    return;
+  }
+
+  // Sanity check: prezzo cambiato troppo dal momento del segnale
+  if (priceBefore > 0 && Math.abs(s.price - priceBefore) / priceBefore > 0.3) {
+    alog(s.sym + ': prezzo instabile ($' + priceBefore.toFixed(2) + ' -> $' + s.price.toFixed(2) + '), skip', 'err');
+    return;
+  }
+
+  // Check esposizione totale (basata su CAP, non su equity gonfiata)
+  const currentExposure = positions.reduce((sum, p) => sum + p.entry * p.qty, 0);
+  if (currentExposure >= MAX_EXPOSURE) {
+    alog(s.sym + ': esposizione max $' + MAX_EXPOSURE.toLocaleString() + ' raggiunta, skip', 'err');
     return;
   }
 
@@ -2301,43 +2319,32 @@ async function executeAgentTrade(sig, side) {
   const slPct = _sp.sl / 100;
   const tpPct = _sp.tp / 100;
   const riskPct = _sp.risk / 100;
-  const equity = getEquity();
-  const riskAmt = equity * riskPct;
-  // Prezzo d'entrata realistico (con slippage + spread)
   const entryPrice = parseFloat(applyEntrySlippage(s.price, side).toFixed(2));
   const slDist = entryPrice * slPct;
-  let qty = Math.max(1, Math.floor(riskAmt / slDist));
 
-  // CAP posizione: max 10% dell'equity per singola posizione
-  const MAX_POS_PCT = 0.10;
-  const maxPosValue = equity * MAX_POS_PCT;
-  if (qty * entryPrice > maxPosValue) {
-    qty = Math.max(1, Math.floor(maxPosValue / entryPrice));
-  }
-
-  // CAP esposizione totale: max 100% dell'equity (no leva)
-  const currentExposure = positions.reduce((sum, p) => sum + p.entry * p.qty, 0);
-  if (currentExposure + qty * entryPrice > equity) {
-    qty = Math.max(1, Math.floor((equity - currentExposure) / entryPrice));
-    if (qty <= 0 || currentExposure >= equity) {
-      alog(s.sym + ': esposizione massima raggiunta, trade annullato', 'err');
-      return;
-    }
-  }
+  // Calcola qty basata su rischio, poi applica TUTTI i cap
+  let qty = Math.max(1, Math.floor(CAP * riskPct / slDist));
+  // Cap 1: max valore posizione
+  if (qty * entryPrice > MAX_POS_VALUE) qty = Math.floor(MAX_POS_VALUE / entryPrice);
+  // Cap 2: max qty assoluto
+  if (qty > MAX_QTY) qty = MAX_QTY;
+  // Cap 3: non superare esposizione massima
+  const spaceLeft = MAX_EXPOSURE - currentExposure;
+  if (qty * entryPrice > spaceLeft) qty = Math.floor(spaceLeft / entryPrice);
+  // Validazione finale
+  if (qty <= 0) { alog(s.sym + ': qty calcolata = 0, skip', 'err'); return; }
 
   const sl = parseFloat((entryPrice * (side === 'buy' ? (1 - slPct) : (1 + slPct))).toFixed(2));
   const tp = parseFloat((entryPrice * (side === 'buy' ? (1 + tpPct) : (1 - tpPct))).toFixed(2));
-  // Commissione di entrata
   addCommission(COMMISSION_PER_TRADE);
   const pos = { id: Date.now(), sym: s.sym, name: s.name, side, qty, entry: entryPrice, current: s.price, sl, tp, date: new Date().toLocaleDateString('it-IT'), _memoryId: sig._memoryId || null, _isAgent: true };
   positions.push(pos);
   updateTopbar(); renderPositions();
   const eq = getEquity();
   equityHist.push(eq);
-  const slipCost = Math.abs(entryPrice - s.price) * qty;
   const posValue = qty * entryPrice;
-  alog('AGENTE: ' + (side === 'buy' ? 'LONG' : 'SHORT') + ' ' + qty + 'x ' + s.sym + ' @ $' + entryPrice.toFixed(2) + ' (valore $' + posValue.toFixed(0) + ', slip $' + slipCost.toFixed(2) + ' + comm $' + COMMISSION_PER_TRADE.toFixed(2) + ') [conf:' + (sig.signal?.conf || '?') + '/10]', 'trade');
-  toast('🤖 Agente: ' + (side === 'buy' ? '▲ LONG' : '▼ SHORT') + ' ' + qty + 'x ' + s.sym);
+  alog('AGENTE: ' + (side === 'buy' ? 'LONG' : 'SHORT') + ' ' + qty + 'x ' + s.sym + ' @ $' + entryPrice.toFixed(2) + ' ($' + posValue.toFixed(0) + ') [conf:' + (sig.signal?.conf || '?') + '/10]', 'trade');
+  toast('🤖 ' + (side === 'buy' ? 'LONG' : 'SHORT') + ' ' + qty + 'x ' + s.sym);
   sbInsertPosition(pos);
   sbInsertEquity(eq);
 }
