@@ -1217,9 +1217,14 @@ function isValidPosition(p) {
     && (p.side === 'buy' || p.side === 'sell');
 }
 function isValidClosedTrade(t) {
-  return t && typeof t.sym === 'string' && t.sym.length > 0
-    && isValidPrice(t.entry) && isValidPrice(t.exit)
-    && isValidNumber(t.pnl) && isValidNumber(t.qty) && t.qty > 0;
+  if (!t || typeof t.sym !== 'string' || t.sym.length === 0) return false;
+  if (!isValidPrice(t.entry) || !isValidPrice(t.exit)) return false;
+  if (!isValidNumber(t.pnl) || !isValidNumber(t.qty) || t.qty <= 0) return false;
+  // Hard limits: reject hallucinated trades
+  if (t.qty > 500) { console.warn('Closed trade rejected: qty ' + t.qty + ' > 500 for ' + t.sym); return false; }
+  if (t.entry < 2) { console.warn('Closed trade rejected: entry $' + t.entry + ' < $2 for ' + t.sym); return false; }
+  if (Math.abs(t.pnl) > CAP * 0.10) { console.warn('Closed trade rejected: |pnl| $' + Math.abs(t.pnl).toFixed(0) + ' > $' + (CAP*0.10) + ' for ' + t.sym); return false; }
+  return true;
 }
 function sanitizePosition(p) {
   return { ...p,
@@ -1792,6 +1797,16 @@ function closePos(id) {
   addCommission(COMMISSION_PER_TRADE); // commissione di uscita
   const pnl = (exitPrice - p.entry) * p.qty * (p.side === 'sell' ? -1 : 1) - (COMMISSION_PER_TRADE * 2); // include comm entry+exit
   const pct = (pnl / (p.entry * p.qty) * 100);
+  // Guard: reject hallucinated PnL (max 10% of CAP per single trade)
+  if (Math.abs(pnl) > CAP * 0.10) {
+    alog('⚠ BLOCCO: PnL anomalo $' + pnl.toFixed(0) + ' per ' + p.sym + ' — trade scartato', 'err');
+    _closingPositions.delete(closeKey);
+    positions.splice(idx, 1); // rimuovi posizione anomala senza contarla
+    if (p._dbId) sbDeletePosition(p._dbId);
+    updateTopbar(); renderPositions();
+    saveLocalState();
+    return;
+  }
   const trade = { ...p, exit: exitPrice, pnl, pct };
   closed.push(trade);
   positions.splice(idx, 1);
@@ -1943,18 +1958,47 @@ async function runAudit() {
     html += '</div><hr style="border-color:var(--brd);margin:8px 0">';
   }
 
+  // ── Audit CLOSED TRADES ──
+  const closedIssues = [];
+  for (const t of closed) {
+    const cflags = [];
+    if (t.qty > 500) cflags.push('QTY ANOMALA: ' + t.qty + ' (max 500)');
+    if (t.entry < 2) cflags.push('ENTRY < $2: $' + t.entry.toFixed(2));
+    if (Math.abs(t.pnl) > CAP * 0.10) cflags.push('PNL ANOMALO: $' + t.pnl.toFixed(0) + ' (max $' + (CAP*0.10).toLocaleString() + ')');
+    if (t.entry * t.qty > CAP * 0.10) cflags.push('VALORE POSIZIONE ANOMALO: $' + (t.entry * t.qty).toLocaleString('en',{maximumFractionDigits:0}));
+    if (cflags.length > 0) {
+      anomalies++;
+      closedIssues.push({ sym: t.sym, id: t.id, dbId: t._dbId, flags: cflags, entry: t.entry, exit: t.exit, qty: t.qty, pnl: t.pnl });
+    }
+  }
+
   if (anomalies === 0) {
-    html += '<div style="color:var(--g);font-size:12px;padding:10px;text-align:center">✅ NESSUNA ANOMALIA — Tutte le ' + positions.length + ' posizioni sono realistiche</div>';
+    html += '<div style="color:var(--g);font-size:12px;padding:10px;text-align:center">✅ NESSUNA ANOMALIA — ' + positions.length + ' posizioni e ' + closed.length + ' trade chiusi sono realistici</div>';
   } else {
-    html += '<div style="color:var(--r);font-size:12px;margin-bottom:8px">⚠️ ' + anomalies + ' ANOMALIE TROVATE su ' + positions.length + ' posizioni:</div>';
-    for (const iss of issues) {
-      html += '<div style="background:rgba(255,23,68,.08);border:1px solid rgba(255,23,68,.2);border-radius:6px;padding:8px;margin-bottom:6px">';
-      html += '<div style="color:var(--r);font-weight:700">' + iss.sym + ' — ' + iss.qty + 'x @ $' + iss.entry.toFixed(2) + ' (mercato: $' + iss.current.toFixed(2) + ')</div>';
-      html += '<div style="font-size:9px;color:var(--txd)">Valore: $' + iss.posValue.toLocaleString('en', {maximumFractionDigits:0}) + ' | P&L: ' + (iss.pnl >= 0 ? '+' : '') + '$' + iss.pnl.toLocaleString('en', {maximumFractionDigits:0}) + '</div>';
-      for (const f of iss.flags) {
-        html += '<div style="color:var(--y);font-size:9px">⚠ ' + f + '</div>';
+    html += '<div style="color:var(--r);font-size:12px;margin-bottom:8px">⚠️ ' + anomalies + ' ANOMALIE TROVATE:</div>';
+    if (issues.length > 0) {
+      html += '<div style="color:var(--txb);font-size:10px;margin-bottom:4px"><b>POSIZIONI APERTE (' + issues.length + '):</b></div>';
+      for (const iss of issues) {
+        html += '<div style="background:rgba(255,23,68,.08);border:1px solid rgba(255,23,68,.2);border-radius:6px;padding:8px;margin-bottom:6px">';
+        html += '<div style="color:var(--r);font-weight:700">' + iss.sym + ' — ' + iss.qty + 'x @ $' + iss.entry.toFixed(2) + ' (mercato: $' + iss.current.toFixed(2) + ')</div>';
+        html += '<div style="font-size:9px;color:var(--txd)">Valore: $' + iss.posValue.toLocaleString('en', {maximumFractionDigits:0}) + ' | P&L: ' + (iss.pnl >= 0 ? '+' : '') + '$' + iss.pnl.toLocaleString('en', {maximumFractionDigits:0}) + '</div>';
+        for (const f of iss.flags) {
+          html += '<div style="color:var(--y);font-size:9px">⚠ ' + f + '</div>';
+        }
+        html += '</div>';
       }
-      html += '</div>';
+    }
+    if (closedIssues.length > 0) {
+      html += '<div style="color:var(--txb);font-size:10px;margin:8px 0 4px"><b>TRADE CHIUSI ANOMALI (' + closedIssues.length + '):</b></div>';
+      for (const iss of closedIssues) {
+        html += '<div style="background:rgba(255,152,0,.08);border:1px solid rgba(255,152,0,.2);border-radius:6px;padding:8px;margin-bottom:6px">';
+        html += '<div style="color:var(--y);font-weight:700">' + iss.sym + ' — ' + iss.qty + 'x @ $' + iss.entry.toFixed(2) + ' → $' + iss.exit.toFixed(2) + '</div>';
+        html += '<div style="font-size:9px;color:var(--txd)">P&L: ' + (iss.pnl >= 0 ? '+' : '') + '$' + iss.pnl.toLocaleString('en', {maximumFractionDigits:0}) + '</div>';
+        for (const f of iss.flags) {
+          html += '<div style="color:var(--y);font-size:9px">⚠ ' + f + '</div>';
+        }
+        html += '</div>';
+      }
     }
   }
   el.innerHTML = html;
@@ -1994,25 +2038,58 @@ async function purgeAnomalies() {
     seen.add(key);
   }
 
-  if (!toRemove.length) {
+  // ── Purge closed trades anomali ──
+  const closedToRemove = [];
+  for (const t of closed) {
+    if (t.qty > 500 || t.entry < 2 || Math.abs(t.pnl) > CAP * 0.10 || t.entry * t.qty > CAP * 0.10) {
+      closedToRemove.push(t);
+    }
+  }
+
+  if (!toRemove.length && !closedToRemove.length) {
     toast('Nessuna anomalia da eliminare');
     await runAudit();
     return;
   }
 
-  // Rimuovi posizioni anomale (senza contarle come trade chiusi)
+  // Rimuovi posizioni aperte anomale (senza contarle come trade chiusi)
   for (const p of toRemove) {
     const idx = positions.findIndex(x => x.id === p.id || x._dbId === p._dbId);
     if (idx >= 0) positions.splice(idx, 1);
     if (p._dbId) sbDeletePosition(p._dbId);
-    alog('PURGE: rimossa ' + p.sym + ' (' + p.qty + 'x @ $' + p.entry.toFixed(2) + ')', 'err');
+    alog('PURGE posizione: ' + p.sym + ' (' + p.qty + 'x @ $' + p.entry.toFixed(2) + ')', 'err');
+  }
+
+  // Rimuovi trade chiusi anomali + cancella da Supabase
+  for (const t of closedToRemove) {
+    const idx = closed.findIndex(x => (x._dbId && x._dbId === t._dbId) || (x.id === t.id && x.sym === t.sym && x.pnl === t.pnl));
+    if (idx >= 0) closed.splice(idx, 1);
+    if (t._dbId && sb) {
+      try { await sb.from('trading_closed_trades').delete().eq('id', t._dbId); } catch(e) {}
+    }
+    alog('PURGE trade chiuso: ' + t.sym + ' (' + t.qty + 'x, PnL $' + t.pnl.toFixed(0) + ')', 'err');
+  }
+
+  // Reset equity history (i valori storici sono inquinati dai trade anomali)
+  if (closedToRemove.length > 0) {
+    const correctedEquity = getEquity();
+    equityHist = [CAP, correctedEquity];
+    alog('PURGE: equity history resettata a $' + correctedEquity.toLocaleString('en', {maximumFractionDigits:0}), 'ok');
+    // Pulisci anche equity su Supabase
+    if (sb) {
+      try {
+        await sb.from('trading_equity_history').delete().gt('id', '00000000-0000-0000-0000-000000000000');
+        await sb.from('trading_equity_history').insert({ equity: correctedEquity });
+      } catch(e) {}
+    }
   }
 
   updateTopbar();
   renderPositions();
   saveLocalState();
-  toast(toRemove.length + ' posizioni anomale eliminate');
-  alog('PURGE: ' + toRemove.length + ' rimosse, ' + positions.length + ' rimaste', 'ok');
+  const totalPurged = toRemove.length + closedToRemove.length;
+  toast(totalPurged + ' anomalie eliminate (' + toRemove.length + ' posizioni, ' + closedToRemove.length + ' trade chiusi)');
+  alog('PURGE: ' + toRemove.length + ' posizioni + ' + closedToRemove.length + ' trade chiusi rimossi', 'ok');
   await runAudit();
 }
 
