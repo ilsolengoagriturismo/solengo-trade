@@ -640,8 +640,16 @@ canvas#eqCanvas{width:100%;height:120px}
           <div style="font-size:9px;color:var(--txd);margin-top:6px;text-align:center">Chiude tutte le posizioni, azzera P&L e ricomincia da $100,000</div>
         </div>
         <div class="settings-section">
+          <div class="ss-title">🛡 INTEGRITÀ SISTEMA</div>
+          <div id="health-status" style="font-size:10px;line-height:1.8;margin-bottom:10px"></div>
+          <div style="display:flex;gap:8px;margin-bottom:10px">
+            <button class="btn-save" onclick="runHealthCheck()" style="flex:1">🛡 HEALTH CHECK</button>
+            <button class="btn-save" onclick="forceSyncToLocal()" style="background:var(--bg3);border:1px solid var(--brd);color:var(--tx);flex:1">💾 BACKUP LOCALE</button>
+          </div>
+        </div>
+        <div class="settings-section">
           <div class="ss-title">🔍 AUDIT POSIZIONI</div>
-          <div style="font-size:10px;color:var(--txd);margin-bottom:10px;line-height:1.6">Verifica se le posizioni aperte hanno dati realistici. Confronta prezzo d'entrata vs prezzo di mercato attuale.</div>
+          <div style="font-size:10px;color:var(--txd);margin-bottom:10px;line-height:1.6">Verifica se le posizioni aperte hanno dati realistici. Confronta prezzo d'entrata vs prezzo di mercato attuale. Rileva duplicati, posizioni orfane e dati corrotti.</div>
           <div style="display:flex;gap:8px;margin-bottom:10px">
             <button class="btn-save" onclick="runAudit()" style="flex:1">🔍 ESEGUI AUDIT</button>
             <button class="btn-save" onclick="purgeAnomalies()" style="background:rgba(255,23,68,.1);border-color:rgba(255,23,68,.3);color:var(--r);flex:1">🗑 ELIMINA ANOMALIE</button>
@@ -1176,115 +1184,224 @@ function resetCostData() {
 // SUPABASE PERSISTENCE LAYER
 // ─────────────────────────────
 let sb = null; // Supabase client instance
+let _sbHealthy = false; // track Supabase connection health
+let _isScanning = false; // guard against concurrent scans
+let _isMonitoring = false; // guard against concurrent SL/TP monitors
+let _closingPositions = new Set(); // guard against double-close
+
+// ── localStorage fallback layer ──
+function saveLocalState() {
+  try {
+    localStorage.setItem('st_positions', JSON.stringify(positions));
+    localStorage.setItem('st_closed', JSON.stringify(closed));
+    localStorage.setItem('st_equityHist', JSON.stringify(equityHist.slice(-500)));
+    localStorage.setItem('st_watchlist', JSON.stringify(watchlist));
+  } catch(e) { console.warn('localStorage save error:', e); }
+}
+function loadLocalState() {
+  try {
+    const p = localStorage.getItem('st_positions'); if (p) positions = JSON.parse(p);
+    const c = localStorage.getItem('st_closed'); if (c) closed = JSON.parse(c);
+    const e = localStorage.getItem('st_equityHist'); if (e) equityHist = JSON.parse(e);
+    const w = localStorage.getItem('st_watchlist'); if (w) watchlist = JSON.parse(w);
+  } catch(e) { console.warn('localStorage load error:', e); }
+}
+
+// ── Data validation ──
+function isValidNumber(v) { return typeof v === 'number' && isFinite(v) && !isNaN(v); }
+function isValidPrice(v) { return isValidNumber(v) && v >= 0; }
+function isValidPosition(p) {
+  return p && typeof p.sym === 'string' && p.sym.length > 0 && p.sym.length <= 10
+    && isValidPrice(p.entry) && isValidPrice(p.current)
+    && isValidNumber(p.qty) && p.qty > 0 && p.qty <= 10000
+    && (p.side === 'buy' || p.side === 'sell');
+}
+function isValidClosedTrade(t) {
+  return t && typeof t.sym === 'string' && t.sym.length > 0
+    && isValidPrice(t.entry) && isValidPrice(t.exit)
+    && isValidNumber(t.pnl) && isValidNumber(t.qty) && t.qty > 0;
+}
+function sanitizePosition(p) {
+  return { ...p,
+    qty: Math.min(Math.max(1, Math.round(p.qty)), 10000),
+    entry: Math.max(0.01, p.entry),
+    current: Math.max(0.01, p.current),
+    sl: p.sl && isValidPrice(p.sl) ? p.sl : null,
+    tp: p.tp && isValidPrice(p.tp) ? p.tp : null
+  };
+}
 
 function initSupabase() {
   const url = getSetting('sb-url');
   const key = getSetting('sb-key');
-  if (!url || !key) { sb = null; return false; }
+  if (!url || !key) { sb = null; _sbHealthy = false; return false; }
   try {
     sb = supabase.createClient(url, key);
+    _sbHealthy = true;
     return true;
-  } catch(e) { sb = null; return false; }
+  } catch(e) { sb = null; _sbHealthy = false; return false; }
 }
 
 async function sbLoadAll() {
   if (!sb) return;
   try {
     // Load watchlist
-    const { data: wl } = await sb.from('trading_watchlist').select('*').order('created_at');
+    const { data: wl, error: wlErr } = await sb.from('trading_watchlist').select('*').order('created_at');
+    if (wlErr) throw wlErr;
     if (wl && wl.length > 0) {
-      watchlist = wl.map(r => ({ sym: r.sym, name: r.name, price: parseFloat(r.price), signal: r.signal }));
+      watchlist = wl
+        .filter(r => r.sym && r.sym.length > 0 && r.sym.length <= 10)
+        .map(r => ({
+          sym: r.sym, name: r.name || r.sym,
+          price: isValidPrice(parseFloat(r.price)) ? parseFloat(r.price) : 0,
+          signal: r.signal
+        }));
     }
-    // Load open positions
-    const { data: pos } = await sb.from('trading_positions').select('*').order('date');
+    // Load open positions (with validation)
+    const { data: pos, error: posErr } = await sb.from('trading_positions').select('*').order('date');
+    if (posErr) throw posErr;
     if (pos) {
-      positions = pos.map(r => ({
-        id: r.id, sym: r.sym, name: r.name,
+      const raw = pos.map(r => ({
+        id: r.id, sym: r.sym, name: r.name || r.sym,
         side: r.side === 'long' ? 'buy' : 'sell',
         qty: parseFloat(r.qty), entry: parseFloat(r.entry),
         current: parseFloat(r.current),
         sl: r.sl ? parseFloat(r.sl) : null,
         tp: r.tp ? parseFloat(r.tp) : null,
-        date: new Date(r.date).toLocaleDateString('it-IT'),
-        _dbId: r.id
+        date: r.date ? new Date(r.date).toLocaleDateString('it-IT') : new Date().toLocaleDateString('it-IT'),
+        _dbId: r.id,
+        _loadedAt: Date.now()
       }));
+      positions = raw.filter(isValidPosition).map(sanitizePosition);
+      const rejected = raw.length - positions.length;
+      if (rejected > 0) alog('⚠ ' + rejected + ' posizioni invalide scartate al caricamento', 'err');
     }
-    // Load closed trades
-    const { data: ct } = await sb.from('trading_closed_trades').select('*').order('closed_at', { ascending: false });
+    // Load closed trades (with validation)
+    const { data: ct, error: ctErr } = await sb.from('trading_closed_trades').select('*').order('closed_at', { ascending: false });
+    if (ctErr) throw ctErr;
     if (ct) {
-      closed = ct.map(r => ({
-        id: r.id, sym: r.sym, name: r.name,
-        side: r.side === 'long' ? 'buy' : 'sell',
-        qty: parseFloat(r.qty), entry: parseFloat(r.entry),
-        exit: parseFloat(r.exit),
-        sl: r.sl ? parseFloat(r.sl) : null,
-        tp: r.tp ? parseFloat(r.tp) : null,
-        pnl: parseFloat(r.pnl), pct: parseFloat(r.pct),
-        date: new Date(r.date).toLocaleDateString('it-IT'),
-        _dbId: r.id
-      }));
+      closed = ct
+        .map(r => ({
+          id: r.id, sym: r.sym, name: r.name || r.sym,
+          side: r.side === 'long' ? 'buy' : 'sell',
+          qty: parseFloat(r.qty), entry: parseFloat(r.entry),
+          exit: parseFloat(r.exit),
+          sl: r.sl ? parseFloat(r.sl) : null,
+          tp: r.tp ? parseFloat(r.tp) : null,
+          pnl: parseFloat(r.pnl), pct: parseFloat(r.pct),
+          date: r.date ? new Date(r.date).toLocaleDateString('it-IT') : '—',
+          _dbId: r.id
+        }))
+        .filter(isValidClosedTrade);
     }
-    // Load equity history
-    const { data: eq } = await sb.from('trading_equity_history').select('equity').order('created_at');
+    // Load equity history (capped at 500)
+    const { data: eq, error: eqErr } = await sb.from('trading_equity_history').select('equity').order('created_at');
+    if (eqErr) throw eqErr;
     if (eq && eq.length > 0) {
-      equityHist = eq.map(r => parseFloat(r.equity));
+      equityHist = eq.map(r => parseFloat(r.equity)).filter(isValidNumber).slice(-500);
     }
+    _sbHealthy = true;
+    saveLocalState(); // backup to localStorage
     updateTopbar(); renderMarket(); renderPositions(); initSymParams();
     await sbLoadAgentMemory();
     sbStatusOk('Dati caricati: ' + watchlist.length + ' titoli, ' + positions.length + ' posizioni, ' + closed.length + ' trade chiusi, ' + agentMemory.length + ' memorie agente');
   } catch(e) {
-    sbStatusErr('Errore caricamento: ' + e.message);
+    _sbHealthy = false;
+    sbStatusErr('Errore Supabase: ' + e.message + ' — uso dati locali');
+    alog('Supabase fallback: caricamento da localStorage', 'err');
+    loadLocalState();
+    updateTopbar(); renderMarket(); renderPositions(); initSymParams();
+  }
+}
+
+// ── Retry helper (1 retry after 2s) ──
+async function sbRetry(fn, label) {
+  try { return await fn(); }
+  catch(e) {
+    alog('⚠ Supabase ' + label + ' fallito, retry...', 'err');
+    await new Promise(r => setTimeout(r, 2000));
+    try { return await fn(); }
+    catch(e2) {
+      _sbHealthy = false;
+      alog('✗ Supabase ' + label + ' fallito definitivamente: ' + e2.message, 'err');
+      return null;
+    }
   }
 }
 
 // ── Watchlist sync ──
 async function sbUpsertWatchItem(item) {
   if (!sb) return;
-  await sb.from('trading_watchlist').upsert({
-    sym: item.sym, name: item.name,
-    price: item.price, signal: item.signal
-  }, { onConflict: 'sym' });
+  await sbRetry(async () => {
+    const { error } = await sb.from('trading_watchlist').upsert({
+      sym: item.sym, name: item.name,
+      price: item.price, signal: item.signal
+    }, { onConflict: 'sym' });
+    if (error) throw error;
+  }, 'upsert watchlist');
+  saveLocalState();
 }
 
 async function sbDeleteWatchItem(sym) {
   if (!sb) return;
-  await sb.from('trading_watchlist').delete().eq('sym', sym);
+  await sbRetry(async () => {
+    const { error } = await sb.from('trading_watchlist').delete().eq('sym', sym);
+    if (error) throw error;
+  }, 'delete watchlist');
+  saveLocalState();
 }
 
 // ── Positions sync ──
 async function sbInsertPosition(pos) {
-  if (!sb) return;
-  const { data } = await sb.from('trading_positions').insert({
-    sym: pos.sym, name: pos.name,
-    side: pos.side === 'buy' ? 'long' : 'short',
-    qty: pos.qty, entry: pos.entry, current: pos.current,
-    sl: pos.sl, tp: pos.tp, date: new Date().toISOString()
-  }).select('id').single();
-  if (data) pos._dbId = data.id;
+  if (!sb) { saveLocalState(); return; }
+  await sbRetry(async () => {
+    const { data, error } = await sb.from('trading_positions').insert({
+      sym: pos.sym, name: pos.name,
+      side: pos.side === 'buy' ? 'long' : 'short',
+      qty: pos.qty, entry: pos.entry, current: pos.current,
+      sl: pos.sl, tp: pos.tp, date: new Date().toISOString()
+    }).select('id').single();
+    if (error) throw error;
+    if (data) pos._dbId = data.id;
+  }, 'insert position');
+  saveLocalState();
 }
 
 async function sbDeletePosition(dbId) {
-  if (!sb) return;
-  if (dbId) await sb.from('trading_positions').delete().eq('id', dbId);
+  if (!sb || !dbId) return;
+  await sbRetry(async () => {
+    const { error } = await sb.from('trading_positions').delete().eq('id', dbId);
+    if (error) throw error;
+  }, 'delete position');
+  saveLocalState();
 }
 
 // ── Closed trades sync ──
 async function sbInsertClosedTrade(trade) {
-  if (!sb) return;
-  await sb.from('trading_closed_trades').insert({
-    sym: trade.sym, name: trade.name,
-    side: trade.side === 'buy' ? 'long' : 'short',
-    qty: trade.qty, entry: trade.entry, exit: trade.exit,
-    sl: trade.sl, tp: trade.tp,
-    pnl: trade.pnl, pct: trade.pct,
-    date: new Date().toISOString(), closed_at: new Date().toISOString()
-  });
+  if (!sb) { saveLocalState(); return; }
+  await sbRetry(async () => {
+    const { error } = await sb.from('trading_closed_trades').insert({
+      sym: trade.sym, name: trade.name,
+      side: trade.side === 'buy' ? 'long' : 'short',
+      qty: trade.qty, entry: trade.entry, exit: trade.exit,
+      sl: trade.sl, tp: trade.tp,
+      pnl: trade.pnl, pct: trade.pct,
+      date: new Date().toISOString(), closed_at: new Date().toISOString()
+    });
+    if (error) throw error;
+  }, 'insert closed trade');
+  saveLocalState();
 }
 
 // ── Equity sync ──
 async function sbInsertEquity(value) {
-  if (!sb) return;
-  await sb.from('trading_equity_history').insert({ equity: value });
+  if (!sb) { saveLocalState(); return; }
+  // Cap local equityHist at 500
+  if (equityHist.length > 500) equityHist = equityHist.slice(-500);
+  await sbRetry(async () => {
+    const { error } = await sb.from('trading_equity_history').insert({ equity: value });
+    if (error) throw error;
+  }, 'insert equity');
 }
 
 // ── Agent Memory (agent_memory table) ──
@@ -1387,9 +1504,14 @@ window.addEventListener('load', async () => {
     alog('Supabase connesso — caricamento dati...', 'info');
     await sbLoadAll();
   } else {
+    // Fallback: load from localStorage
+    alog('Supabase non configurato — caricamento da localStorage', 'info');
+    loadLocalState();
     renderMarket();
     initSymParams();
     updateTopbar();
+    renderPositions();
+    if (positions.length > 0) alog('Ripristinate ' + positions.length + ' posizioni da localStorage', 'ok');
   }
   alog('Sistema avviato', 'info');
   updateCostDisplay(); // show saved cost data
@@ -1661,6 +1783,10 @@ function closePos(id) {
   const idx = positions.findIndex(p => p.id === id || p._dbId === id);
   if (idx === -1) return;
   const p = positions[idx];
+  // Guard: prevent double-close
+  const closeKey = (p._dbId || p.id) + '';
+  if (_closingPositions.has(closeKey)) { alog('⚠ Posizione ' + p.sym + ' già in chiusura, skip', 'info'); return; }
+  _closingPositions.add(closeKey);
   // Prezzo di uscita realistico (con slippage + spread)
   const exitPrice = parseFloat(applyExitSlippage(p.current, p.side).toFixed(2));
   addCommission(COMMISSION_PER_TRADE); // commissione di uscita
@@ -1671,12 +1797,14 @@ function closePos(id) {
   positions.splice(idx, 1);
   updateTopbar(); renderPositions(); updateStats();
   const eq = getEquity();
+  if (equityHist.length > 500) equityHist = equityHist.slice(-500);
   equityHist.push(eq);
   toast((pnl >= 0 ? '✓ ' : '✗ ') + p.sym + ' chiuso: ' + (pnl >= 0 ? '+' : '') + '$' + pnl.toFixed(2), pnl < 0);
   alog('CHIUSO ' + p.sym + ' P&L: ' + (pnl >= 0 ? '+' : '') + '$' + pnl.toFixed(2), pnl >= 0 ? 'ok' : 'err');
   sbDeletePosition(p._dbId);
   sbInsertClosedTrade(trade);
   sbInsertEquity(eq);
+  _closingPositions.delete(closeKey);
   // Update agent memory if this position has a memory ID
   if (p._memoryId) {
     const outcome = pnl >= 0 ? 'WIN' : 'LOSS';
@@ -1688,10 +1816,13 @@ function closePos(id) {
 }
 
 function killAll() {
-  [...positions].forEach(p => closePos(p.id));
+  if (!positions.length) { toast('Nessuna posizione da chiudere'); return; }
+  if (!confirm('Chiudere tutte le ' + positions.length + ' posizioni aperte?')) return;
+  [...positions].forEach(p => closePos(p._dbId || p.id));
 }
 
 async function resetPortfolio() {
+  if (!confirm('ATTENZIONE: Questo cancellerà TUTTE le posizioni, lo storico trade e la curva equity. Sei sicuro?')) return;
   // Reset locale
   positions = [];
   closed = [];
@@ -1714,6 +1845,7 @@ async function resetPortfolio() {
       alog('Errore pulizia Supabase: ' + e.message, 'err');
     }
   }
+  saveLocalState();
   toast('Portafoglio resettato a $100,000');
   alog('🔄 RESET PORTAFOGLIO — ripartenza da $100,000 con simulazione realistica', 'ok');
 }
@@ -1731,11 +1863,41 @@ async function runAudit() {
   let html = '<div style="margin-bottom:8px;color:var(--txb)"><b>RIEPILOGO PORTAFOGLIO</b></div>';
   html += '<div>Equity: <b style="color:var(--g)">$' + equity.toLocaleString('en', {maximumFractionDigits:0}) + '</b></div>';
   html += '<div>Posizioni aperte: <b>' + positions.length + '</b></div>';
-  html += '<div>Esposizione totale: <b>$' + totalExposure.toLocaleString('en', {maximumFractionDigits:0}) + '</b> (' + (totalExposure/equity*100).toFixed(0) + '% equity)</div>';
+  html += '<div>Esposizione totale: <b>$' + totalExposure.toLocaleString('en', {maximumFractionDigits:0}) + '</b> (' + (equity > 0 ? (totalExposure/equity*100).toFixed(0) : '0') + '% equity)</div>';
+
+  // Supabase health check
+  html += '<div>Supabase: <b style="color:' + (_sbHealthy ? 'var(--g)' : 'var(--r)') + '">' + (_sbHealthy ? '✓ Connesso' : '✗ Disconnesso — localStorage attivo') + '</b></div>';
+  html += '<div>localStorage: <b style="color:var(--g)">✓ Attivo</b></div>';
   html += '<hr style="border-color:var(--brd);margin:8px 0">';
 
   let anomalies = 0;
   const issues = [];
+  const warnings = [];
+
+  // ── Check 0: Posizioni duplicate (stesso simbolo + stessa side) ──
+  const posMap = {};
+  for (const p of positions) {
+    const key = p.sym + '_' + p.side;
+    if (!posMap[key]) posMap[key] = [];
+    posMap[key].push(p);
+  }
+  for (const [key, dupes] of Object.entries(posMap)) {
+    if (dupes.length > 1) {
+      warnings.push('POSIZIONI DUPLICATE: ' + dupes.length + 'x ' + key.replace('_', ' ') + ' — possibile errore di sync');
+    }
+  }
+
+  // ── Check: Esposizione totale > CAP ──
+  if (totalExposure > CAP * 1.2) {
+    warnings.push('ESPOSIZIONE ECCESSIVA: $' + totalExposure.toLocaleString('en', {maximumFractionDigits:0}) + ' (' + (totalExposure/CAP*100).toFixed(0) + '% del capitale) — max consigliato 100%');
+  }
+
+  // ── Check: equityHist overflow ──
+  if (equityHist.length > 500) {
+    warnings.push('EQUITY HISTORY: ' + equityHist.length + ' entries (max 500) — verrà troncata');
+    equityHist = equityHist.slice(-500);
+    saveLocalState();
+  }
 
   for (const p of positions) {
     const s = watchlist.find(x => x.sym === p.sym);
@@ -1744,7 +1906,6 @@ async function runAudit() {
     const pnl = (p.current - p.entry) * p.qty * (p.side === 'sell' ? -1 : 1);
     const pnlPct = ((p.current - p.entry) / p.entry * 100 * (p.side === 'sell' ? -1 : 1));
     const entryDeviation = marketPrice > 0 ? Math.abs(p.entry - marketPrice) / marketPrice * 100 : 0;
-    const leverageRatio = posValue / equity;
 
     const flags = [];
     // Check 1: Prezzo d'entrata troppo diverso dal mercato (>30%)
@@ -1757,11 +1918,29 @@ async function runAudit() {
     if (p.qty > 500) flags.push('QTY ANOMALA: ' + p.qty + ' (max 500)');
     // Check 5: Entry price < $2 (penny stock)
     if (p.entry < 2) flags.push('ENTRY < $2: penny stock non ammesso');
+    // Check 6: Prezzo corrente = 0 o NaN
+    if (!isValidPrice(p.current) || p.current <= 0) flags.push('PREZZO CORRENTE INVALIDO: ' + p.current);
+    // Check 7: Entry = 0 o NaN
+    if (!isValidPrice(p.entry) || p.entry <= 0) flags.push('PREZZO ENTRY INVALIDO: ' + p.entry);
+    // Check 8: SL/TP invertiti
+    if (p.side === 'buy' && p.sl && p.tp && p.sl >= p.tp) flags.push('SL/TP INVERTITI: SL $' + p.sl.toFixed(2) + ' >= TP $' + p.tp.toFixed(2));
+    if (p.side === 'sell' && p.sl && p.tp && p.sl <= p.tp) flags.push('SL/TP INVERTITI (SHORT): SL $' + p.sl.toFixed(2) + ' <= TP $' + p.tp.toFixed(2));
+    // Check 9: Posizione senza simbolo nella watchlist
+    if (!s) flags.push('ORFANA: simbolo ' + p.sym + ' non presente in watchlist');
 
     if (flags.length > 0) {
       anomalies++;
       issues.push({ sym: p.sym, id: p.id, dbId: p._dbId, flags, entry: p.entry, current: p.current, qty: p.qty, pnl, posValue });
     }
+  }
+
+  // Show system warnings
+  if (warnings.length > 0) {
+    html += '<div style="margin-bottom:8px">';
+    for (const w of warnings) {
+      html += '<div style="color:var(--y);font-size:10px;padding:4px 0">⚠ ' + w + '</div>';
+    }
+    html += '</div><hr style="border-color:var(--brd);margin:8px 0">';
   }
 
   if (anomalies === 0) {
@@ -1779,12 +1958,15 @@ async function runAudit() {
     }
   }
   el.innerHTML = html;
-  alog('AUDIT: ' + positions.length + ' posizioni, ' + anomalies + ' anomalie trovate', anomalies > 0 ? 'err' : 'ok');
+  alog('AUDIT: ' + positions.length + ' posizioni, ' + anomalies + ' anomalie, ' + warnings.length + ' warnings', anomalies > 0 ? 'err' : 'ok');
 }
 
 async function purgeAnomalies() {
   const el = document.getElementById('audit-results');
   if (el) el.innerHTML = '<div style="color:var(--y)">Eliminazione anomalie in corso...</div>';
+
+  // Refresh prices first for accurate deviation check
+  await refreshAllPrices();
 
   const toRemove = [];
   for (const p of positions) {
@@ -1792,10 +1974,24 @@ async function purgeAnomalies() {
     const marketPrice = s ? s.price : p.current;
     const entryDeviation = marketPrice > 0 ? Math.abs(p.entry - marketPrice) / marketPrice * 100 : 0;
     const pnlPct = Math.abs((p.current - p.entry) / p.entry * 100);
-    // Criteri chiari: qty >5000, entry <$1, entry deviato >30%, P&L >100%, posizione >$100K
-    if (p.qty > 500 || p.entry < 2 || entryDeviation > 30 || pnlPct > 50 || p.entry * p.qty > CAP * 0.05) {
+    // Criteri: qty >500, entry <$2, entry deviato >30%, P&L >50%, posizione >5% CAP,
+    // prezzo invalido, entry invalido
+    if (p.qty > 500 || p.entry < 2 || entryDeviation > 30 || pnlPct > 50
+        || p.entry * p.qty > CAP * 0.05
+        || !isValidPrice(p.current) || p.current <= 0
+        || !isValidPrice(p.entry) || p.entry <= 0) {
       toRemove.push(p);
     }
+  }
+
+  // Also remove duplicate positions (keep only the first of each sym+side)
+  const seen = new Set();
+  for (const p of positions) {
+    const key = p.sym + '_' + p.side;
+    if (seen.has(key) && !toRemove.includes(p)) {
+      toRemove.push(p);
+    }
+    seen.add(key);
   }
 
   if (!toRemove.length) {
@@ -1806,7 +2002,7 @@ async function purgeAnomalies() {
 
   // Rimuovi posizioni anomale (senza contarle come trade chiusi)
   for (const p of toRemove) {
-    const idx = positions.findIndex(x => x.id === p.id);
+    const idx = positions.findIndex(x => x.id === p.id || x._dbId === p._dbId);
     if (idx >= 0) positions.splice(idx, 1);
     if (p._dbId) sbDeletePosition(p._dbId);
     alog('PURGE: rimossa ' + p.sym + ' (' + p.qty + 'x @ $' + p.entry.toFixed(2) + ')', 'err');
@@ -1814,9 +2010,90 @@ async function purgeAnomalies() {
 
   updateTopbar();
   renderPositions();
+  saveLocalState();
   toast(toRemove.length + ' posizioni anomale eliminate');
   alog('PURGE: ' + toRemove.length + ' rimosse, ' + positions.length + ' rimaste', 'ok');
   await runAudit();
+}
+
+// ─────────────────────────────
+// HEALTH CHECK + BACKUP
+// ─────────────────────────────
+async function runHealthCheck() {
+  const el = document.getElementById('health-status');
+  if (!el) return;
+  el.innerHTML = '<div style="color:var(--y)">Controllo in corso...</div>';
+  let html = '';
+  let issues = 0;
+
+  // 1. Supabase connection
+  if (sb) {
+    try {
+      const { count, error } = await sb.from('trading_positions').select('*', { count: 'exact', head: true });
+      if (error) throw error;
+      const sbPosCount = count || 0;
+      _sbHealthy = true;
+      html += '<div style="color:var(--g)">✓ Supabase: connesso (' + sbPosCount + ' posizioni DB vs ' + positions.length + ' locali)</div>';
+      if (sbPosCount !== positions.length) {
+        html += '<div style="color:var(--y)">  ⚠ Disallineamento locale/DB — esegui backup o ricarica</div>';
+        issues++;
+      }
+    } catch(e) {
+      _sbHealthy = false;
+      html += '<div style="color:var(--r)">✗ Supabase: errore — ' + e.message + '</div>';
+      issues++;
+    }
+  } else {
+    html += '<div style="color:var(--y)">⚠ Supabase: non configurato</div>';
+  }
+
+  // 2. localStorage
+  try {
+    const testKey = 'st_health_' + Date.now();
+    localStorage.setItem(testKey, '1');
+    localStorage.removeItem(testKey);
+    const localPos = JSON.parse(localStorage.getItem('st_positions') || '[]');
+    html += '<div style="color:var(--g)">✓ localStorage: funzionante (' + localPos.length + ' posizioni salvate)</div>';
+  } catch(e) {
+    html += '<div style="color:var(--r)">✗ localStorage: errore — ' + e.message + '</div>';
+    issues++;
+  }
+
+  // 3. Data integrity
+  const invalidPos = positions.filter(p => !isValidPosition(p));
+  if (invalidPos.length > 0) {
+    html += '<div style="color:var(--r)">✗ ' + invalidPos.length + ' posizioni con dati invalidi</div>';
+    issues++;
+  } else {
+    html += '<div style="color:var(--g)">✓ Posizioni: tutti i dati validi (' + positions.length + ')</div>';
+  }
+
+  // 4. Equity history size
+  html += '<div style="color:' + (equityHist.length > 450 ? 'var(--y)' : 'var(--g)') + '">✓ Equity history: ' + equityHist.length + '/500 punti</div>';
+
+  // 5. Budget status
+  const budgetPct = (costData.today / DAILY_BUDGET * 100).toFixed(0);
+  html += '<div style="color:' + (costData.today >= DAILY_BUDGET ? 'var(--r)' : 'var(--g)') + '">' + (costData.today >= DAILY_BUDGET ? '⚠' : '✓') + ' Budget AI: $' + costData.today.toFixed(4) + '/$' + DAILY_BUDGET.toFixed(2) + ' (' + budgetPct + '%)</div>';
+
+  // 6. Concurrency guards
+  html += '<div style="color:var(--g)">✓ Guard scan: ' + (_isScanning ? 'ATTIVO' : 'libero') + ' | Guard monitor: ' + (_isMonitoring ? 'ATTIVO' : 'libero') + '</div>';
+
+  // Summary
+  html += '<hr style="border-color:var(--brd);margin:6px 0">';
+  if (issues === 0) {
+    html += '<div style="color:var(--g);font-weight:700">✅ SISTEMA OK — nessun problema rilevato</div>';
+  } else {
+    html += '<div style="color:var(--y);font-weight:700">⚠ ' + issues + ' problemi rilevati — controlla sopra</div>';
+  }
+
+  el.innerHTML = html;
+  alog('HEALTH CHECK: ' + issues + ' problemi', issues > 0 ? 'err' : 'ok');
+}
+
+function forceSyncToLocal() {
+  saveLocalState();
+  toast('✓ Backup locale completato');
+  alog('Backup forzato su localStorage: ' + positions.length + ' pos, ' + closed.length + ' trade, ' + equityHist.length + ' equity', 'ok');
 }
 
 function updateTradingCostsDisplay() {
@@ -1951,6 +2228,8 @@ TICKER: SIMBOLO | NOME_AZIENDA | MOTIVO_BREVE
 
 async function monitorSLTP() {
   if (!positions.length) return;
+  if (_isMonitoring) { alog('Monitor SL/TP: già in esecuzione, skip', 'info'); return; }
+  _isMonitoring = true;
   alog('Monitor SL/TP: controllo ' + positions.length + ' posizioni...', 'info');
   // Refresh prices first
   for (const p of positions) {
@@ -1974,19 +2253,23 @@ async function monitorSLTP() {
       toClose.push(p);
     }
   }
-  for (const p of toClose) { closePos(p.id); }
+  for (const p of toClose) { closePos(p._dbId || p.id); }
   if (toClose.length) alog('Autopilota: chiuse ' + toClose.length + ' posizioni', 'trade');
   renderPositions();
+  _isMonitoring = false;
 }
 
 async function runAgentScan() {
+  if (_isScanning) { alog('⚠ Scansione già in corso, skip', 'info'); return; }
+  _isScanning = true;
   const aiKey = getSetting('ai-key');
-  if (!aiKey) { toast('Inserisci API key nelle Impostazioni', true); return; }
+  if (!aiKey) { toast('Inserisci API key nelle Impostazioni', true); _isScanning = false; return; }
 
   // Budget check: skip scan if daily budget exhausted
   if (isBudgetExhausted()) {
     alog('⚠️ Budget giornaliero esaurito — scansione saltata', 'err');
     toast('Budget AI esaurito per oggi', true);
+    _isScanning = false;
     return;
   }
 
@@ -2139,6 +2422,8 @@ async function runAgentScan() {
 
   // Reload memory for stats
   await sbLoadAgentMemory();
+  saveLocalState(); // backup after scan
+  _isScanning = false;
 }
 
 function buildAgentPrompt(s) {
