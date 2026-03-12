@@ -640,6 +640,15 @@ canvas#eqCanvas{width:100%;height:120px}
           <div style="font-size:9px;color:var(--txd);margin-top:6px;text-align:center">Chiude tutte le posizioni, azzera P&L e ricomincia da $100,000</div>
         </div>
         <div class="settings-section">
+          <div class="ss-title">🔍 AUDIT POSIZIONI</div>
+          <div style="font-size:10px;color:var(--txd);margin-bottom:10px;line-height:1.6">Verifica se le posizioni aperte hanno dati realistici. Confronta prezzo d'entrata vs prezzo di mercato attuale.</div>
+          <div style="display:flex;gap:8px;margin-bottom:10px">
+            <button class="btn-save" onclick="runAudit()" style="flex:1">🔍 ESEGUI AUDIT</button>
+            <button class="btn-save" onclick="purgeAnomalies()" style="background:rgba(255,23,68,.1);border-color:rgba(255,23,68,.3);color:var(--r);flex:1">🗑 ELIMINA ANOMALIE</button>
+          </div>
+          <div id="audit-results" style="font-size:10px;color:var(--txd);line-height:1.8;max-height:300px;overflow-y:auto"></div>
+        </div>
+        <div class="settings-section">
           <div class="ss-title">INFO</div>
           <div style="font-size:11px;color:var(--txd);line-height:1.8">
             <div>✦ Paper trading — nessun denaro reale</div>
@@ -1708,6 +1717,109 @@ async function resetPortfolio() {
   }
   toast('Portafoglio resettato a $100,000');
   alog('🔄 RESET PORTAFOGLIO — ripartenza da $100,000 con simulazione realistica', 'ok');
+}
+
+async function runAudit() {
+  const el = document.getElementById('audit-results');
+  if (!el) return;
+  el.innerHTML = '<div style="color:var(--y)">Audit in corso... aggiornamento prezzi...</div>';
+
+  // Refresh tutti i prezzi prima dell'audit
+  await refreshAllPrices();
+
+  const equity = getEquity();
+  const totalExposure = positions.reduce((s, p) => s + p.entry * p.qty, 0);
+  let html = '<div style="margin-bottom:8px;color:var(--txb)"><b>RIEPILOGO PORTAFOGLIO</b></div>';
+  html += '<div>Equity: <b style="color:var(--g)">$' + equity.toLocaleString('en', {maximumFractionDigits:0}) + '</b></div>';
+  html += '<div>Posizioni aperte: <b>' + positions.length + '</b></div>';
+  html += '<div>Esposizione totale: <b>$' + totalExposure.toLocaleString('en', {maximumFractionDigits:0}) + '</b> (' + (totalExposure/equity*100).toFixed(0) + '% equity)</div>';
+  html += '<hr style="border-color:var(--brd);margin:8px 0">';
+
+  let anomalies = 0;
+  const issues = [];
+
+  for (const p of positions) {
+    const s = watchlist.find(x => x.sym === p.sym);
+    const marketPrice = s ? s.price : p.current;
+    const posValue = p.entry * p.qty;
+    const pnl = (p.current - p.entry) * p.qty * (p.side === 'sell' ? -1 : 1);
+    const pnlPct = ((p.current - p.entry) / p.entry * 100 * (p.side === 'sell' ? -1 : 1));
+    const entryDeviation = marketPrice > 0 ? Math.abs(p.entry - marketPrice) / marketPrice * 100 : 0;
+    const leverageRatio = posValue / equity;
+
+    const flags = [];
+    // Check 1: Prezzo d'entrata troppo diverso dal mercato (>30%)
+    if (entryDeviation > 30) flags.push('PREZZO ENTRATA SOSPETTO: $' + p.entry.toFixed(2) + ' vs mercato $' + marketPrice.toFixed(2) + ' (dev ' + entryDeviation.toFixed(0) + '%)');
+    // Check 2: Posizione troppo grande (>15% equity)
+    if (leverageRatio > 0.15) flags.push('POSIZIONE ENORME: $' + posValue.toLocaleString('en', {maximumFractionDigits:0}) + ' = ' + (leverageRatio*100).toFixed(0) + '% equity');
+    // Check 3: P&L irrealistico (>100%)
+    if (Math.abs(pnlPct) > 100) flags.push('P&L IRREALISTICO: ' + (pnlPct > 0 ? '+' : '') + pnlPct.toFixed(0) + '%');
+    // Check 4: Qty troppo alta (>5000 azioni)
+    if (p.qty > 5000) flags.push('QTY ANOMALA: ' + p.qty + ' azioni');
+    // Check 5: Entry price < $1 (quasi sicuramente bug)
+    if (p.entry < 1) flags.push('ENTRY < $1: probabile bug');
+
+    if (flags.length > 0) {
+      anomalies++;
+      issues.push({ sym: p.sym, id: p.id, dbId: p._dbId, flags, entry: p.entry, current: p.current, qty: p.qty, pnl, posValue });
+    }
+  }
+
+  if (anomalies === 0) {
+    html += '<div style="color:var(--g);font-size:12px;padding:10px;text-align:center">✅ NESSUNA ANOMALIA — Tutte le ' + positions.length + ' posizioni sono realistiche</div>';
+  } else {
+    html += '<div style="color:var(--r);font-size:12px;margin-bottom:8px">⚠️ ' + anomalies + ' ANOMALIE TROVATE su ' + positions.length + ' posizioni:</div>';
+    for (const iss of issues) {
+      html += '<div style="background:rgba(255,23,68,.08);border:1px solid rgba(255,23,68,.2);border-radius:6px;padding:8px;margin-bottom:6px">';
+      html += '<div style="color:var(--r);font-weight:700">' + iss.sym + ' — ' + iss.qty + 'x @ $' + iss.entry.toFixed(2) + ' (mercato: $' + iss.current.toFixed(2) + ')</div>';
+      html += '<div style="font-size:9px;color:var(--txd)">Valore: $' + iss.posValue.toLocaleString('en', {maximumFractionDigits:0}) + ' | P&L: ' + (iss.pnl >= 0 ? '+' : '') + '$' + iss.pnl.toLocaleString('en', {maximumFractionDigits:0}) + '</div>';
+      for (const f of iss.flags) {
+        html += '<div style="color:var(--y);font-size:9px">⚠ ' + f + '</div>';
+      }
+      html += '</div>';
+    }
+  }
+  el.innerHTML = html;
+  alog('AUDIT: ' + positions.length + ' posizioni, ' + anomalies + ' anomalie trovate', anomalies > 0 ? 'err' : 'ok');
+}
+
+async function purgeAnomalies() {
+  // Prima esegui audit per identificare anomalie
+  await refreshAllPrices();
+  const equity = getEquity();
+  const toRemove = [];
+
+  for (const p of positions) {
+    const s = watchlist.find(x => x.sym === p.sym);
+    const marketPrice = s ? s.price : p.current;
+    const entryDeviation = marketPrice > 0 ? Math.abs(p.entry - marketPrice) / marketPrice * 100 : 0;
+    const posValue = p.entry * p.qty;
+    const pnlPct = Math.abs((p.current - p.entry) / p.entry * 100);
+
+    if (entryDeviation > 30 || posValue > equity * 0.20 || pnlPct > 100 || p.qty > 5000 || p.entry < 1) {
+      toRemove.push(p);
+    }
+  }
+
+  if (!toRemove.length) {
+    toast('Nessuna anomalia da eliminare');
+    runAudit();
+    return;
+  }
+
+  // Rimuovi posizioni anomale (senza contarle come trade chiusi)
+  for (const p of toRemove) {
+    const idx = positions.findIndex(x => x.id === p.id);
+    if (idx >= 0) positions.splice(idx, 1);
+    if (p._dbId) sbDeletePosition(p._dbId);
+    alog('PURGE: rimossa posizione anomala ' + p.sym + ' (' + p.qty + 'x @ $' + p.entry.toFixed(2) + ')', 'err');
+  }
+
+  updateTopbar();
+  renderPositions();
+  toast(toRemove.length + ' posizioni anomale eliminate');
+  alog('PURGE completato: ' + toRemove.length + ' posizioni rimosse, ' + positions.length + ' rimaste', 'ok');
+  runAudit();
 }
 
 function updateTradingCostsDisplay() {
