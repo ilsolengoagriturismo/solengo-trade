@@ -2720,9 +2720,6 @@ async function refreshSentiment() {
   // Render immediately in English
   renderTickerNewsList(withData, list);
 
-  // Translate all ticker news to Italian
-  const allTickerNews = withData.flatMap(r => r.news);
-  await translateNewsBatch(allTickerNews);
   renderTickerNewsList(withData, list);
 }
 
@@ -2857,8 +2854,6 @@ async function loadChartNews(sym) {
         <div style="font-size:8px;color:var(--txd)">${n.source} · ${timeAgo(n.date)}</div>
       </a>`).join('');
   };
-  renderChartNewsList();
-  await translateNewsBatch(news);
   renderChartNewsList();
 }
 
@@ -3176,8 +3171,6 @@ async function fetchNews() {
   document.getElementById('nb-news').textContent = cnt;
   document.getElementById('nb-news').className = 'nav-badge' + (cnt > 0 ? ' show' : '');
 
-  // Translate to Italian in background
-  await translateNewsBatch(allNews);
   renderNews();
 }
 
