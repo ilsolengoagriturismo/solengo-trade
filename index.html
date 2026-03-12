@@ -592,11 +592,12 @@ canvas#eqCanvas{width:100%;height:120px}
         </div>
         <div class="settings-section">
           <div class="ss-title">💰 COSTI API</div>
-          <div style="font-size:10px;color:var(--txd);margin-bottom:10px;line-height:1.6">Monitoraggio in tempo reale dei costi delle chiamate AI. Modello: <span style="color:var(--g)">Claude Haiku 4.5</span></div>
+          <div style="font-size:10px;color:var(--txd);margin-bottom:10px;line-height:1.6">Budget giornaliero: <span style="color:var(--g);font-weight:700">$1.00/giorno</span> | Modello: <span style="color:var(--g)">Claude Haiku 4.5</span> | Scansione ogni 15 min, 20 titoli per ciclo</div>
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px">
             <div style="background:var(--bg3);padding:10px;border-radius:8px;border:1px solid var(--brd)">
-              <div style="font-size:9px;color:var(--txd);letter-spacing:1px">OGGI</div>
+              <div style="font-size:9px;color:var(--txd);letter-spacing:1px">OGGI / BUDGET</div>
               <div style="font-size:16px;font-weight:700;color:var(--g)" id="cost-today">$0.0000</div>
+              <div style="width:100%;height:4px;background:var(--bg);border-radius:2px;margin-top:4px"><div id="cost-budget-bar" style="width:0%;height:100%;background:var(--g);border-radius:2px;transition:width .3s"></div></div>
             </div>
             <div style="background:var(--bg3);padding:10px;border-radius:8px;border:1px solid var(--brd)">
               <div style="font-size:9px;color:var(--txd);letter-spacing:1px">TOTALE</div>
@@ -1072,6 +1073,9 @@ const COST_RATES = {
   'claude-haiku-4-5-20251001': { input: 0.80 / 1e6, output: 4.00 / 1e6 },
   'claude-sonnet-4-20250514':  { input: 3.00 / 1e6, output: 15.00 / 1e6 }
 };
+const DAILY_BUDGET = 1.00; // $1/giorno massimo
+const MAX_TICKERS_PER_SCAN = 20; // scansiona max 20 ticker per ciclo (rotazione)
+let scanRotationIndex = 0; // indice di rotazione per scansione a gruppi
 let costData = JSON.parse(localStorage.getItem('st_cost_data') || '{"total":0,"today":0,"todayDate":"","calls":0,"callsToday":0,"byType":{"scan":0,"discovery":0,"translate":0,"alloc":0},"history":[]}');
 
 function trackCost(model, usage, type) {
@@ -1100,15 +1104,35 @@ function trackCost(model, usage, type) {
 
   localStorage.setItem('st_cost_data', JSON.stringify(costData));
   updateCostDisplay();
+
+  // Budget check: pause agent if daily budget exceeded
+  if (costData.today >= DAILY_BUDGET) {
+    if (agentTimer) { clearInterval(agentTimer); agentTimer = null; }
+    if (autopilotTimer) { clearInterval(autopilotTimer); autopilotTimer = null; }
+    if (slTpMonitorTimer) { clearInterval(slTpMonitorTimer); slTpMonitorTimer = null; }
+    autopilotActive = false;
+    const apBtn = document.getElementById('btn-autopilot');
+    if (apBtn) { apBtn.textContent = '🤖 AUTOPILOTA: OFF'; apBtn.className = 'btn-autopilot'; }
+    alog('⚠️ BUDGET GIORNALIERO RAGGIUNTO ($' + costData.today.toFixed(2) + '/$' + DAILY_BUDGET.toFixed(2) + ') — agente in pausa fino a domani', 'err');
+    toast('Budget AI giornaliero esaurito ($' + DAILY_BUDGET.toFixed(2) + ')', true);
+  }
+
   return cost;
+}
+
+function isBudgetExhausted() {
+  const today = new Date().toISOString().slice(0, 10);
+  if (costData.todayDate !== today) return false;
+  return costData.today >= DAILY_BUDGET;
 }
 
 function updateCostDisplay() {
   const el = document.getElementById('m-cost');
   if (el) {
-    const todayCent = (costData.today * 100).toFixed(1);
-    el.textContent = costData.today < 0.01 ? '<1¢' : costData.today < 1 ? todayCent + '¢' : '$' + costData.today.toFixed(2);
-    el.className = 'metric-v' + (costData.today > 1 ? ' dn' : '');
+    const pct = Math.min(100, (costData.today / DAILY_BUDGET * 100)).toFixed(0);
+    const todayFmt = costData.today < 0.01 ? '<1¢' : costData.today < 1 ? (costData.today * 100).toFixed(1) + '¢' : '$' + costData.today.toFixed(2);
+    el.textContent = todayFmt + '/$' + DAILY_BUDGET.toFixed(0) + ' (' + pct + '%)';
+    el.className = 'metric-v' + (costData.today >= DAILY_BUDGET ? ' dn' : costData.today >= DAILY_BUDGET * 0.8 ? '' : '');
   }
   const elTotal = document.getElementById('cost-total');
   if (elTotal) elTotal.textContent = '$' + costData.total.toFixed(4);
@@ -1124,6 +1148,12 @@ function updateCostDisplay() {
   if (elTrans) elTrans.textContent = '$' + (costData.byType.translate || 0).toFixed(4);
   const elAlloc = document.getElementById('cost-alloc');
   if (elAlloc) elAlloc.textContent = '$' + (costData.byType.alloc || 0).toFixed(4);
+  const elBar = document.getElementById('cost-budget-bar');
+  if (elBar) {
+    const pct = Math.min(100, costData.today / DAILY_BUDGET * 100);
+    elBar.style.width = pct + '%';
+    elBar.style.background = pct >= 100 ? 'var(--r)' : pct >= 80 ? 'var(--y)' : 'var(--g)';
+  }
 }
 
 function resetCostData() {
@@ -1688,7 +1718,7 @@ function toggleAgent() {
   document.getElementById('agent-status-txt').textContent = agentActive ? 'Agente attivo — scansione ogni 5 min' : 'Agente inattivo';
   if (agentActive) {
     alog('Agente attivato — modalità: ' + document.getElementById('agent-mode').value, 'ok');
-    agentTimer = setInterval(runAgentScan, 5 * 60 * 1000);
+    agentTimer = setInterval(runAgentScan, 15 * 60 * 1000);
     // Run first scan immediately
     setTimeout(runAgentScan, 2000);
   } else {
@@ -1727,6 +1757,7 @@ function toggleDiscovery() {
 async function discoverTickers() {
   const aiKey = getSetting('ai-key');
   if (!aiKey) return [];
+  if (isBudgetExhausted()) return [];
   alog('🔍 Scoperta: cerco nuove opportunità di mercato...', 'info');
 
   const currentSymbols = watchlist.map(s => s.sym).join(', ');
@@ -1765,7 +1796,7 @@ TICKER: SIMBOLO | NOME_AZIENDA | MOTIVO_BREVE
     const res = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-api-key': aiKey, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
-      body: JSON.stringify({ model: 'claude-haiku-4-5-20251001', max_tokens: 400, messages: [{ role: 'user', content: prompt }] })
+      body: JSON.stringify({ model: 'claude-haiku-4-5-20251001', max_tokens: 250, messages: [{ role: 'user', content: prompt }] })
     });
     if (!res.ok) { alog('🔍 Errore API discovery', 'err'); return []; }
     const data = await res.json();
@@ -1827,13 +1858,20 @@ async function monitorSLTP() {
 async function runAgentScan() {
   const aiKey = getSetting('ai-key');
   if (!aiKey) { toast('Inserisci API key nelle Impostazioni', true); return; }
+
+  // Budget check: skip scan if daily budget exhausted
+  if (isBudgetExhausted()) {
+    alog('⚠️ Budget giornaliero esaurito — scansione saltata', 'err');
+    toast('Budget AI esaurito per oggi', true);
+    return;
+  }
+
   const btn = document.getElementById('btn-scan');
   btn.disabled = true; btn.textContent = '⏳ ANALISI IN CORSO...';
-  alog('Scansione avviata su ' + watchlist.length + ' titoli', 'info');
   pendingSignals = [];
 
-  // Discovery: find new tickers before scanning
-  if (discoveryActive) {
+  // Discovery: find new tickers (only every 4th cycle to save budget)
+  if (discoveryActive && scanRotationIndex === 0) {
     try {
       const discovered = await discoverTickers();
       for (const d of discovered) {
@@ -1851,10 +1889,25 @@ async function runAgentScan() {
     } catch (e) { alog('Errore discovery: ' + e.message, 'err'); }
   }
 
-  for (const s of watchlist) {
-    if (s.price <= 0) continue;
-    const sp = getSymParams(s.sym);
-    if (!sp.active) { alog(s.sym + ': saltato (inattivo)', 'info'); continue; }
+  // Rotation: scan only MAX_TICKERS_PER_SCAN per cycle
+  const activeList = watchlist.filter(s => s.price > 0 && getSymParams(s.sym).active);
+  const startIdx = scanRotationIndex % Math.max(1, activeList.length);
+  const scanBatch = activeList.slice(startIdx, startIdx + MAX_TICKERS_PER_SCAN);
+  // Wrap around if needed
+  if (scanBatch.length < MAX_TICKERS_PER_SCAN && startIdx > 0) {
+    const remaining = MAX_TICKERS_PER_SCAN - scanBatch.length;
+    scanBatch.push(...activeList.slice(0, remaining));
+  }
+  scanRotationIndex = (startIdx + MAX_TICKERS_PER_SCAN) % Math.max(1, activeList.length);
+
+  alog('Scansione gruppo ' + Math.ceil((startIdx + 1) / MAX_TICKERS_PER_SCAN) + '/' + Math.ceil(activeList.length / MAX_TICKERS_PER_SCAN) + ' (' + scanBatch.length + '/' + activeList.length + ' titoli)', 'info');
+
+  for (const s of scanBatch) {
+    // Stop mid-scan if budget exhausted
+    if (isBudgetExhausted()) {
+      alog('⚠️ Budget raggiunto durante scansione — interrotto', 'err');
+      break;
+    }
     try {
       alog('Analisi ' + s.sym + '...', 'info');
       // Pre-fetch ticker news for AI context if not cached
@@ -1872,7 +1925,7 @@ async function runAgentScan() {
           headers: { 'Content-Type':'application/json', 'x-api-key':aiKey, 'anthropic-version':'2023-06-01', 'anthropic-dangerous-direct-browser-access':'true' },
           body: JSON.stringify({
             model: 'claude-haiku-4-5-20251001',
-            max_tokens: 600,
+            max_tokens: 300,
             messages: [{ role: 'user', content: buildAgentPrompt(s) }]
           })
         });
@@ -2869,7 +2922,7 @@ ATTENZIONE: [un rischio specifico da monitorare]`;
     const res = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: { 'Content-Type':'application/json', 'x-api-key':aiKey, 'anthropic-version':'2023-06-01', 'anthropic-dangerous-direct-browser-access':'true' },
-      body: JSON.stringify({ model:'claude-haiku-4-5-20251001', max_tokens:400, messages:[{ role:'user', content:prompt }] })
+      body: JSON.stringify({ model:'claude-haiku-4-5-20251001', max_tokens:250, messages:[{ role:'user', content:prompt }] })
     });
     const data = await res.json();
     trackCost('claude-haiku-4-5-20251001', data.usage, 'alloc');
@@ -3040,6 +3093,7 @@ const SECTOR_IMPACT = {
 async function translateNewsBatch(items) {
   const aiKey = getSetting('ai-key');
   if (!aiKey || !items.length) return items;
+  if (isBudgetExhausted()) return items; // skip translation if budget exhausted
   // Only translate items that look English (skip Italian sources and already translated)
   const toTranslate = items.filter(n => !n._translated && n._lang !== 'it' && /\b(the|is|are|and|for|with|has|was|will|from|that|this|have|been|not|but|its|can|may|new|says|said|after|over|into|more|could|would|about)\b/i.test(n.title));
   if (!toTranslate.length) return items;
