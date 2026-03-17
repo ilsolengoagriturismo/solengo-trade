@@ -591,8 +591,17 @@ canvas#eqCanvas{width:100%;height:120px}
           <button class="btn-save" onclick="saveKeys()">💾 SALVA CHIAVI</button>
         </div>
         <div class="settings-section">
-          <div class="ss-title">💰 COSTI API</div>
-          <div style="font-size:10px;color:var(--txd);margin-bottom:10px;line-height:1.6">Budget giornaliero: <span style="color:var(--g);font-weight:700">$1.00/giorno</span> | Modello: <span style="color:var(--g)">Claude Haiku 4.5</span> | Scansione ogni 15 min, 20 titoli per ciclo</div>
+          <div class="ss-title">💰 BUDGET & INTELLIGENZA AI</div>
+          <!-- Budget giornaliero slider -->
+          <div style="margin-bottom:14px">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+              <div style="font-size:10px;color:var(--txd);letter-spacing:1px">BUDGET GIORNALIERO</div>
+              <div style="font-size:18px;font-weight:700;color:var(--g)" id="budget-value-label">$1.00</div>
+            </div>
+            <input type="range" id="budget-slider" min="0.25" max="10" step="0.25" value="1.00" oninput="onBudgetSliderChange(this.value)" style="width:100%;accent-color:var(--g);height:6px">
+            <div style="display:flex;justify-content:space-between;font-size:8px;color:var(--txd);margin-top:2px"><span>$0.25</span><span>$5.00</span><span>$10.00</span></div>
+          </div>
+          <!-- Oggi / Totale cards -->
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px">
             <div style="background:var(--bg3);padding:10px;border-radius:8px;border:1px solid var(--brd)">
               <div style="font-size:9px;color:var(--txd);letter-spacing:1px">OGGI / BUDGET</div>
@@ -604,14 +613,114 @@ canvas#eqCanvas{width:100%;height:120px}
               <div style="font-size:16px;font-weight:700;color:var(--y)" id="cost-total">$0.0000</div>
             </div>
           </div>
-          <div style="font-size:10px;color:var(--txd);line-height:2" id="cost-breakdown">
-            <div>📡 Chiamate API: <span id="cost-calls" style="color:var(--txb)">0 oggi / 0 totali</span></div>
-            <div>🔍 Scansioni agente: <span id="cost-scan" style="color:var(--txb)">$0.0000</span></div>
-            <div>🧭 Discovery: <span id="cost-disc" style="color:var(--txb)">$0.0000</span></div>
-            <div>🌐 Traduzioni: <span id="cost-trans" style="color:var(--txb)">$0.0000</span></div>
-            <div>📊 Allocazione AI: <span id="cost-alloc" style="color:var(--txb)">$0.0000</span></div>
+          <div style="font-size:10px;color:var(--txd);margin-bottom:6px">📡 Chiamate API: <span id="cost-calls" style="color:var(--txb)">0 oggi / 0 totali</span></div>
+
+          <!-- ALLOCAZIONE PER TIPO -->
+          <div style="font-size:10px;color:var(--g);letter-spacing:1px;margin:14px 0 8px;font-weight:700">ALLOCAZIONE INTELLIGENZA</div>
+          <div style="font-size:9px;color:var(--txd);margin-bottom:10px;line-height:1.5">Decidi quanto budget dedicare ad ogni tipo di operazione AI e quale modello usare. Sonnet è 5x più costoso ma più preciso nelle analisi.</div>
+
+          <!-- Scan -->
+          <div class="alloc-row" style="background:var(--bg3);border:1px solid var(--brd);border-radius:8px;padding:10px;margin-bottom:8px">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+              <div style="font-size:10px;color:var(--tx)">🔍 <b>Scansione Agente</b></div>
+              <div style="display:flex;align-items:center;gap:6px">
+                <select id="model-scan" onchange="onModelChange('scan',this.value)" style="background:var(--bg);color:var(--tx);border:1px solid var(--brd);border-radius:4px;font-size:9px;padding:2px 4px">
+                  <option value="haiku">Haiku (econ.)</option>
+                  <option value="sonnet">Sonnet (pro)</option>
+                </select>
+                <span id="alloc-pct-scan" style="font-size:12px;font-weight:700;color:var(--g);min-width:32px;text-align:right">50%</span>
+              </div>
+            </div>
+            <input type="range" id="alloc-scan" min="0" max="100" step="5" value="50" oninput="onAllocChange('scan',this.value)" style="width:100%;accent-color:var(--g);height:4px">
+            <div style="display:flex;justify-content:space-between;font-size:8px;color:var(--txd);margin-top:3px">
+              <span>Analisi segnali BUY/SELL per ogni titolo</span>
+              <span id="alloc-budget-scan" style="color:var(--y)">$0.50</span>
+            </div>
+            <div style="width:100%;height:3px;background:var(--bg);border-radius:2px;margin-top:4px"><div id="alloc-bar-scan" style="width:0%;height:100%;border-radius:2px;transition:width .3s"></div></div>
           </div>
+
+          <!-- Discovery -->
+          <div class="alloc-row" style="background:var(--bg3);border:1px solid var(--brd);border-radius:8px;padding:10px;margin-bottom:8px">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+              <div style="font-size:10px;color:var(--tx)">🧭 <b>Discovery Ticker</b></div>
+              <div style="display:flex;align-items:center;gap:6px">
+                <select id="model-discovery" onchange="onModelChange('discovery',this.value)" style="background:var(--bg);color:var(--tx);border:1px solid var(--brd);border-radius:4px;font-size:9px;padding:2px 4px">
+                  <option value="haiku">Haiku (econ.)</option>
+                  <option value="sonnet">Sonnet (pro)</option>
+                </select>
+                <span id="alloc-pct-discovery" style="font-size:12px;font-weight:700;color:var(--g);min-width:32px;text-align:right">20%</span>
+              </div>
+            </div>
+            <input type="range" id="alloc-discovery" min="0" max="100" step="5" value="20" oninput="onAllocChange('discovery',this.value)" style="width:100%;accent-color:var(--g);height:4px">
+            <div style="display:flex;justify-content:space-between;font-size:8px;color:var(--txd);margin-top:3px">
+              <span>Scoperta nuovi titoli con opportunità</span>
+              <span id="alloc-budget-discovery" style="color:var(--y)">$0.20</span>
+            </div>
+            <div style="width:100%;height:3px;background:var(--bg);border-radius:2px;margin-top:4px"><div id="alloc-bar-discovery" style="width:0%;height:100%;border-radius:2px;transition:width .3s"></div></div>
+          </div>
+
+          <!-- Translate -->
+          <div class="alloc-row" style="background:var(--bg3);border:1px solid var(--brd);border-radius:8px;padding:10px;margin-bottom:8px">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+              <div style="font-size:10px;color:var(--tx)">🌐 <b>Traduzioni News</b></div>
+              <div style="display:flex;align-items:center;gap:6px">
+                <select id="model-translate" onchange="onModelChange('translate',this.value)" style="background:var(--bg);color:var(--tx);border:1px solid var(--brd);border-radius:4px;font-size:9px;padding:2px 4px">
+                  <option value="haiku">Haiku (econ.)</option>
+                  <option value="sonnet">Sonnet (pro)</option>
+                </select>
+                <span id="alloc-pct-translate" style="font-size:12px;font-weight:700;color:var(--g);min-width:32px;text-align:right">15%</span>
+              </div>
+            </div>
+            <input type="range" id="alloc-translate" min="0" max="100" step="5" value="15" oninput="onAllocChange('translate',this.value)" style="width:100%;accent-color:var(--g);height:4px">
+            <div style="display:flex;justify-content:space-between;font-size:8px;color:var(--txd);margin-top:3px">
+              <span>Traduzione notizie finanziarie EN→IT</span>
+              <span id="alloc-budget-translate" style="color:var(--y)">$0.15</span>
+            </div>
+            <div style="width:100%;height:3px;background:var(--bg);border-radius:2px;margin-top:4px"><div id="alloc-bar-translate" style="width:0%;height:100%;border-radius:2px;transition:width .3s"></div></div>
+          </div>
+
+          <!-- Alloc -->
+          <div class="alloc-row" style="background:var(--bg3);border:1px solid var(--brd);border-radius:8px;padding:10px;margin-bottom:8px">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+              <div style="font-size:10px;color:var(--tx)">📊 <b>Allocazione Capitale</b></div>
+              <div style="display:flex;align-items:center;gap:6px">
+                <select id="model-alloc" onchange="onModelChange('alloc',this.value)" style="background:var(--bg);color:var(--tx);border:1px solid var(--brd);border-radius:4px;font-size:9px;padding:2px 4px">
+                  <option value="haiku">Haiku (econ.)</option>
+                  <option value="sonnet">Sonnet (pro)</option>
+                </select>
+                <span id="alloc-pct-alloc" style="font-size:12px;font-weight:700;color:var(--g);min-width:32px;text-align:right">15%</span>
+              </div>
+            </div>
+            <input type="range" id="alloc-alloc" min="0" max="100" step="5" value="15" oninput="onAllocChange('alloc',this.value)" style="width:100%;accent-color:var(--g);height:4px">
+            <div style="display:flex;justify-content:space-between;font-size:8px;color:var(--txd);margin-top:3px">
+              <span>Raccomandazione ripartizione portafoglio</span>
+              <span id="alloc-budget-alloc" style="color:var(--y)">$0.15</span>
+            </div>
+            <div style="width:100%;height:3px;background:var(--bg);border-radius:2px;margin-top:4px"><div id="alloc-bar-alloc" style="width:0%;height:100%;border-radius:2px;transition:width .3s"></div></div>
+          </div>
+
+          <!-- Barra totale allocazione -->
+          <div style="background:var(--bg3);border:1px solid var(--brd);border-radius:8px;padding:8px 10px;margin-bottom:10px">
+            <div style="display:flex;justify-content:space-between;font-size:9px;color:var(--txd);margin-bottom:4px">
+              <span>ALLOCAZIONE TOTALE</span>
+              <span id="alloc-total-pct" style="color:var(--g);font-weight:700">100%</span>
+            </div>
+            <div style="width:100%;height:6px;background:var(--bg);border-radius:3px;display:flex;overflow:hidden" id="alloc-stacked-bar">
+              <div id="alloc-stack-scan" style="height:100%;background:#4CAF50;transition:width .3s"></div>
+              <div id="alloc-stack-discovery" style="height:100%;background:#2196F3;transition:width .3s"></div>
+              <div id="alloc-stack-translate" style="height:100%;background:#FF9800;transition:width .3s"></div>
+              <div id="alloc-stack-alloc" style="height:100%;background:#9C27B0;transition:width .3s"></div>
+            </div>
+            <div style="display:flex;gap:10px;margin-top:6px;font-size:8px;flex-wrap:wrap">
+              <span style="color:#4CAF50">● Scan</span>
+              <span style="color:#2196F3">● Discovery</span>
+              <span style="color:#FF9800">● Traduzioni</span>
+              <span style="color:#9C27B0">● Allocazione</span>
+            </div>
+          </div>
+
           <div style="display:flex;gap:8px;margin-top:10px">
+            <button class="btn-save" onclick="resetBudgetAlloc()" style="flex:1">↺ RESET DEFAULT</button>
             <button class="btn-save" onclick="resetCostData()" style="background:rgba(255,23,68,.1);border-color:rgba(255,23,68,.3);color:var(--r);flex:1">🗑 AZZERA CONTATORE</button>
           </div>
         </div>
@@ -1090,8 +1199,42 @@ const COST_RATES = {
   'claude-haiku-4-5-20251001': { input: 0.80 / 1e6, output: 4.00 / 1e6 },
   'claude-sonnet-4-20250514':  { input: 3.00 / 1e6, output: 15.00 / 1e6 }
 };
-const DAILY_BUDGET = 1.00; // $1/giorno massimo
+// Budget AI configurabile
+let DAILY_BUDGET = parseFloat(localStorage.getItem('st_daily_budget') || '1.00');
 const MAX_TICKERS_PER_SCAN = 20; // scansiona max 20 ticker per ciclo (rotazione)
+
+// Allocazione budget per tipo di operazione (% che sommano a 100)
+const DEFAULT_BUDGET_ALLOC = { scan: 50, discovery: 20, translate: 15, alloc: 15 };
+let budgetAlloc = JSON.parse(localStorage.getItem('st_budget_alloc') || JSON.stringify(DEFAULT_BUDGET_ALLOC));
+
+// Modello AI per tipo di operazione (haiku = economico, sonnet = profondo)
+const DEFAULT_MODEL_ALLOC = { scan: 'haiku', discovery: 'haiku', translate: 'haiku', alloc: 'haiku' };
+let modelAlloc = JSON.parse(localStorage.getItem('st_model_alloc') || JSON.stringify(DEFAULT_MODEL_ALLOC));
+
+function getModelForType(type) {
+  const m = modelAlloc[type] || 'haiku';
+  return m === 'sonnet' ? 'claude-sonnet-4-20250514' : 'claude-haiku-4-5-20251001';
+}
+
+function getBudgetForType(type) {
+  return DAILY_BUDGET * (budgetAlloc[type] || 25) / 100;
+}
+
+function isTypeBudgetExhausted(type) {
+  const today = new Date().toISOString().slice(0, 10);
+  if (costData.todayDate !== today) return false;
+  const spent = costData.byType[type] || 0;
+  const limit = getBudgetForType(type);
+  return spent >= limit;
+}
+
+function saveBudgetConfig() {
+  localStorage.setItem('st_daily_budget', DAILY_BUDGET.toString());
+  localStorage.setItem('st_budget_alloc', JSON.stringify(budgetAlloc));
+  localStorage.setItem('st_model_alloc', JSON.stringify(modelAlloc));
+  updateCostDisplay();
+  updateBudgetAllocUI();
+}
 let scanRotationIndex = 0; // indice di rotazione per scansione a gruppi
 let costData = JSON.parse(localStorage.getItem('st_cost_data') || '{"total":0,"today":0,"todayDate":"","calls":0,"callsToday":0,"byType":{"scan":0,"discovery":0,"translate":0,"alloc":0},"history":[]}');
 
@@ -1157,14 +1300,8 @@ function updateCostDisplay() {
   if (elToday) elToday.textContent = '$' + costData.today.toFixed(4);
   const elCalls = document.getElementById('cost-calls');
   if (elCalls) elCalls.textContent = costData.callsToday + ' oggi / ' + costData.calls + ' totali';
-  const elScan = document.getElementById('cost-scan');
-  if (elScan) elScan.textContent = '$' + (costData.byType.scan || 0).toFixed(4);
-  const elDisc = document.getElementById('cost-disc');
-  if (elDisc) elDisc.textContent = '$' + (costData.byType.discovery || 0).toFixed(4);
-  const elTrans = document.getElementById('cost-trans');
-  if (elTrans) elTrans.textContent = '$' + (costData.byType.translate || 0).toFixed(4);
-  const elAlloc = document.getElementById('cost-alloc');
-  if (elAlloc) elAlloc.textContent = '$' + (costData.byType.alloc || 0).toFixed(4);
+  // Update allocation bars
+  updateBudgetAllocUI();
   const elBar = document.getElementById('cost-budget-bar');
   if (elBar) {
     const pct = Math.min(100, costData.today / DAILY_BUDGET * 100);
@@ -1177,7 +1314,85 @@ function resetCostData() {
   costData = { total: 0, today: 0, todayDate: '', calls: 0, callsToday: 0, byType: { scan: 0, discovery: 0, translate: 0, alloc: 0 }, history: [] };
   localStorage.setItem('st_cost_data', JSON.stringify(costData));
   updateCostDisplay();
+  updateBudgetAllocUI();
   toast('Contatore costi azzerato');
+}
+
+function onBudgetSliderChange(val) {
+  DAILY_BUDGET = parseFloat(val);
+  document.getElementById('budget-value-label').textContent = '$' + DAILY_BUDGET.toFixed(2);
+  saveBudgetConfig();
+}
+
+function onAllocChange(type, val) {
+  budgetAlloc[type] = parseInt(val);
+  saveBudgetConfig();
+}
+
+function onModelChange(type, val) {
+  modelAlloc[type] = val;
+  saveBudgetConfig();
+}
+
+function resetBudgetAlloc() {
+  DAILY_BUDGET = 1.00;
+  budgetAlloc = { ...DEFAULT_BUDGET_ALLOC };
+  modelAlloc = { ...DEFAULT_MODEL_ALLOC };
+  saveBudgetConfig();
+  // Reset sliders
+  document.getElementById('budget-slider').value = 1.00;
+  document.getElementById('budget-value-label').textContent = '$1.00';
+  ['scan','discovery','translate','alloc'].forEach(t => {
+    const sl = document.getElementById('alloc-' + t);
+    if (sl) sl.value = DEFAULT_BUDGET_ALLOC[t];
+    const sel = document.getElementById('model-' + t);
+    if (sel) sel.value = 'haiku';
+  });
+  toast('Budget e allocazione ripristinati');
+}
+
+function updateBudgetAllocUI() {
+  const types = ['scan','discovery','translate','alloc'];
+  const colors = { scan: '#4CAF50', discovery: '#2196F3', translate: '#FF9800', alloc: '#9C27B0' };
+  let totalPct = 0;
+  types.forEach(t => {
+    const pct = budgetAlloc[t] || 0;
+    totalPct += pct;
+    const limit = getBudgetForType(t);
+    const spent = costData.byType[t] || 0;
+    const usedPct = limit > 0 ? Math.min(100, spent / limit * 100) : 0;
+
+    const elPct = document.getElementById('alloc-pct-' + t);
+    if (elPct) elPct.textContent = pct + '%';
+    const elBudget = document.getElementById('alloc-budget-' + t);
+    if (elBudget) elBudget.textContent = '$' + limit.toFixed(2);
+    const elBar = document.getElementById('alloc-bar-' + t);
+    if (elBar) {
+      elBar.style.width = usedPct + '%';
+      elBar.style.background = usedPct >= 100 ? 'var(--r)' : usedPct >= 80 ? 'var(--y)' : colors[t];
+    }
+    const elStack = document.getElementById('alloc-stack-' + t);
+    if (elStack) elStack.style.width = pct + '%';
+  });
+  const elTotal = document.getElementById('alloc-total-pct');
+  if (elTotal) {
+    elTotal.textContent = totalPct + '%';
+    elTotal.style.color = totalPct === 100 ? 'var(--g)' : totalPct > 100 ? 'var(--r)' : 'var(--y)';
+  }
+}
+
+function loadBudgetUI() {
+  const sl = document.getElementById('budget-slider');
+  if (sl) sl.value = DAILY_BUDGET;
+  const lbl = document.getElementById('budget-value-label');
+  if (lbl) lbl.textContent = '$' + DAILY_BUDGET.toFixed(2);
+  ['scan','discovery','translate','alloc'].forEach(t => {
+    const el = document.getElementById('alloc-' + t);
+    if (el) el.value = budgetAlloc[t] || 0;
+    const sel = document.getElementById('model-' + t);
+    if (sel) sel.value = modelAlloc[t] || 'haiku';
+  });
+  updateBudgetAllocUI();
 }
 
 // ─────────────────────────────
@@ -1503,6 +1718,7 @@ window.addEventListener('load', async () => {
   if (!localStorage.getItem('st_sb-key')) localStorage.setItem('st_sb-key', _k('zlTbjl2dplEMaJjW4B3VZlnSIFGdoJzY14EWZBjVykFNW1WS2kUaaxmSul0cJNlW6ZUbZhmQYRmeKl2Tp10MjBnS5VmL5o0QWhFcrlkNJN0Y1IlbJNXSp5UMJpXVJpUaPl2YHJGaKlXZ','==QQ65Ub0YlYNhTQnV2cwoWVNtGS65WTvlzUsB1TQl0VxAFeqNzSCZWL4sGduADWPNTTE5UeNRUT0EkaNZTSDNGNW1WSztmeOp3ZE50MRpmTzUkaPlWUYlFcKNETpRjMiVnRtlkNJNlW'));
   if (!localStorage.getItem('st_backend-url')) localStorage.setItem('st_backend-url', 'https://solengo-trade-api.vercel.app');
   loadKeys();
+  loadBudgetUI();
   loadSupabaseConfig();
   // Try Supabase — load data from cloud if configured
   if (initSupabase()) {
@@ -2270,15 +2486,17 @@ Rispondi SOLO in questo formato (un ticker per riga):
 TICKER: SIMBOLO | NOME_AZIENDA | MOTIVO_BREVE
 (oppure scrivi NESSUNO se non ci sono opportunità)`;
 
+  if (isTypeBudgetExhausted('discovery')) { alog('🧭 Budget discovery esaurito — skip', 'info'); return []; }
+  const discoveryModel = getModelForType('discovery');
   try {
     const res = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-api-key': aiKey, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
-      body: JSON.stringify({ model: 'claude-haiku-4-5-20251001', max_tokens: 250, messages: [{ role: 'user', content: prompt }] })
+      body: JSON.stringify({ model: discoveryModel, max_tokens: 250, messages: [{ role: 'user', content: prompt }] })
     });
     if (!res.ok) { alog('🔍 Errore API discovery', 'err'); return []; }
     const data = await res.json();
-    trackCost('claude-haiku-4-5-20251001', data.usage, 'discovery');
+    trackCost(discoveryModel, data.usage, 'discovery');
     const txt = data.content?.[0]?.text || '';
 
     if (txt.includes('NESSUNO') || !txt.includes('TICKER:')) {
@@ -2400,15 +2618,18 @@ async function runAgentScan() {
         if (!window._tickerNewsCache) window._tickerNewsCache = {};
         if (tn.length) window._tickerNewsCache[s.sym] = tn;
       }
+      // Check budget per scan
+      if (isTypeBudgetExhausted('scan')) { alog('🔍 Budget scan esaurito — stop scansione', 'info'); break; }
       // Delay tra chiamate per evitare rate limiting (500ms)
       await new Promise(r => setTimeout(r, 500));
+      const scanModel = getModelForType('scan');
       let res, retries = 0;
       while (retries < 2) {
         res = await fetch('https://api.anthropic.com/v1/messages', {
           method: 'POST',
           headers: { 'Content-Type':'application/json', 'x-api-key':aiKey, 'anthropic-version':'2023-06-01', 'anthropic-dangerous-direct-browser-access':'true' },
           body: JSON.stringify({
-            model: 'claude-haiku-4-5-20251001',
+            model: scanModel,
             max_tokens: 300,
             messages: [{ role: 'user', content: buildAgentPrompt(s) }]
           })
@@ -2426,7 +2647,7 @@ async function runAgentScan() {
       }
       if (!res || !res.ok) continue;
       const data = await res.json();
-      trackCost('claude-haiku-4-5-20251001', data.usage, 'scan');
+      trackCost(scanModel, data.usage, 'scan');
       const txt = data.content?.[0]?.text || '';
       const signal = parseSignal(txt);
       s.signal = signal.action;
@@ -3439,14 +3660,16 @@ LIQUIDITA: [numero 0-100]
 MOTIVAZIONE: [2-3 frasi in italiano che spiegano la raccomandazione basandosi sul contesto]
 ATTENZIONE: [un rischio specifico da monitorare]`;
 
+  if (isTypeBudgetExhausted('alloc')) { toast('Budget allocazione AI esaurito', true); return; }
+  const allocModel = getModelForType('alloc');
   try {
     const res = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: { 'Content-Type':'application/json', 'x-api-key':aiKey, 'anthropic-version':'2023-06-01', 'anthropic-dangerous-direct-browser-access':'true' },
-      body: JSON.stringify({ model:'claude-haiku-4-5-20251001', max_tokens:250, messages:[{ role:'user', content:prompt }] })
+      body: JSON.stringify({ model:allocModel, max_tokens:250, messages:[{ role:'user', content:prompt }] })
     });
     const data = await res.json();
-    trackCost('claude-haiku-4-5-20251001', data.usage, 'alloc');
+    trackCost(allocModel, data.usage, 'alloc');
     const txt = data.content?.[0]?.text || '';
 
     const innov = parseInt(txt.match(/INNOVAZIONE:\s*(\d+)/i)?.[1]) || null;
@@ -3620,7 +3843,9 @@ async function translateNewsBatch(items) {
   if (!toTranslate.length) return items;
 
   // Batch in groups of 15 for efficiency
+  const translateModel = getModelForType('translate');
   for (let i = 0; i < toTranslate.length; i += 15) {
+    if (isTypeBudgetExhausted('translate')) break;
     const batch = toTranslate.slice(i, i + 15);
     const numbered = batch.map((n, idx) => `${idx + 1}. ${n.title}${n.description ? ' ||| ' + n.description : ''}`).join('\n');
     try {
@@ -3628,14 +3853,14 @@ async function translateNewsBatch(items) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-api-key': aiKey, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
         body: JSON.stringify({
-          model: 'claude-haiku-4-5-20251001',
+          model: translateModel,
           max_tokens: 2000,
           messages: [{ role: 'user', content: `Traduci questi titoli di notizie finanziarie in italiano. Mantieni il tono giornalistico, conciso e professionale. Se c'è "|||" separa titolo e descrizione.\n\nRispondi SOLO con le traduzioni numerate nello stesso formato:\n1. TITOLO ||| DESCRIZIONE\n2. TITOLO ||| DESCRIZIONE\n...\n\n${numbered}` }]
         })
       });
       if (!res.ok) continue;
       const data = await res.json();
-      trackCost('claude-haiku-4-5-20251001', data.usage, 'translate');
+      trackCost(translateModel, data.usage, 'translate');
       const txt = data.content?.[0]?.text || '';
       const lines = txt.split('\n').filter(l => /^\d+\./.test(l.trim()));
       lines.forEach(line => {
